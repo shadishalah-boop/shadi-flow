@@ -75,6 +75,7 @@ const execFileAsync = promisify(execFile);
 let mainWindow = null;
 let overlayWindow = null;
 let overlayHideTimer = null;
+let overlayWatchdogTimer = null;
 let targetPollTimer = null;
 let isQuitting = false;
 let lastDictationTarget = null;
@@ -753,6 +754,7 @@ function showOverlay(payload) {
   resizeOverlay(win, payload);
   positionOverlay(win);
   clearTimeout(overlayHideTimer);
+  clearTimeout(overlayWatchdogTimer);
 
   const update = () => {
     if (win.isDestroyed()) return;
@@ -764,6 +766,18 @@ function showOverlay(payload) {
     win.webContents.once("did-finish-load", update);
   } else {
     update();
+  }
+
+  if (payload?.state === "transcribing") {
+    overlayWatchdogTimer = setTimeout(() => {
+      logEvent("overlay:transcribing-watchdog-hide", {
+        dictationState,
+        title: payload.title || "",
+        detail: payload.detail || "",
+      });
+      dictationState = "idle";
+      if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
+    }, 180000);
   }
 }
 
@@ -787,6 +801,7 @@ function resizeOverlay(win, payload = {}) {
 
 function hideOverlayAfter(delayMs = 1300) {
   clearTimeout(overlayHideTimer);
+  clearTimeout(overlayWatchdogTimer);
   overlayHideTimer = setTimeout(() => {
     if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
   }, delayMs);
@@ -2206,10 +2221,12 @@ ipcMain.handle("permissions:open-accessibility-settings", async () => {
 });
 
 ipcMain.handle("overlay:hide", async () => {
+  clearTimeout(overlayHideTimer);
+  clearTimeout(overlayWatchdogTimer);
   if (dictationState === "recording") {
     sendRecordingCancelCommand("overlay-close");
-    dictationState = "idle";
   }
+  dictationState = "idle";
   if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
   return { ok: true };
 });
@@ -2515,6 +2532,8 @@ app.on("quit", (_event, exitCode) => {
 app.on("will-quit", () => {
   logEvent("app:will-quit");
   clearInterval(targetPollTimer);
+  clearTimeout(overlayHideTimer);
+  clearTimeout(overlayWatchdogTimer);
   if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.close();
   stopWhisperWorker();
   stopFluidAudioHelper();

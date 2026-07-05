@@ -1346,6 +1346,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
   if (blob.size < 1400 || recordedMs < 700) {
     setFlow("Too short", "Hold a little longer", { words: 0 });
     publishOverlay({ type: "error", title: "Too short", detail: "Hold a little longer." });
+    hideWorkspaceOverlay(recording, "too-short");
     logDesktopEvent("recording:finish-too-short", { ...recording, bytes: blob.size, recordedMs });
     resetActiveRecording();
     return;
@@ -1422,6 +1423,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
       }
     } else {
       notify(`Saved: ${text}`);
+      hideWorkspaceOverlay(recording, "saved");
     }
     setFlow("Ready", `${entry.words} words / ${data.durationMs}ms`, { words: entry.words });
     resetActiveRecording();
@@ -1431,6 +1433,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
     const detail = friendlyTranscriptionError(error, audioStats);
     setFlow("Transcription unavailable", detail, { words: 0 });
     publishOverlay({ type: "error", title: "Transcription unavailable", detail });
+    hideWorkspaceOverlay(recording, "failed");
     logDesktopEvent("recording:finish-failed", {
       ...recording,
       message: error.message || String(error),
@@ -2209,6 +2212,16 @@ function publishOverlay(status) {
   if (activeRecording.autoInsert && window.clearScribe?.publishDictationStatus) {
     window.clearScribe.publishDictationStatus(status);
   }
+}
+
+function hideWorkspaceOverlay(recording = activeRecording, reason = "workspace-final") {
+  if (recording?.autoInsert || !window.clearScribe?.hideOverlay) return;
+  window.clearScribe.hideOverlay()
+    .then(() => logDesktopEvent("overlay:hidden-workspace", { reason }))
+    .catch((error) => logDesktopEvent("overlay:hide-workspace-failed", {
+      reason,
+      message: error?.message || String(error),
+    }));
 }
 
 function polishPlainDictation(input) {
