@@ -175,13 +175,44 @@ function presentMainWindow(source = "manual") {
     ? mainWindow
     : createWindow({ show: false });
   if (win.isMinimized()) win.restore();
+  placeWindowOnPrimaryDisplay(win, source);
+  if (process.platform === "darwin" && typeof win.setVisibleOnAllWorkspaces === "function") {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
   win.show();
+  if (typeof win.moveTop === "function") win.moveTop();
   if (process.platform === "darwin" && typeof app.focus === "function") {
     app.focus({ steal: true });
   }
   win.focus();
+  if (process.platform === "darwin" && typeof win.setVisibleOnAllWorkspaces === "function") {
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.setVisibleOnAllWorkspaces(false);
+    }, 600);
+  }
   logEvent("main-window:present", { source });
   return win;
+}
+
+function placeWindowOnPrimaryDisplay(win, source = "manual") {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const { workArea } = screen.getPrimaryDisplay();
+    const bounds = win.getBounds();
+    const intersects = bounds.x < workArea.x + workArea.width &&
+      bounds.x + bounds.width > workArea.x &&
+      bounds.y < workArea.y + workArea.height &&
+      bounds.y + bounds.height > workArea.y;
+    const shouldCenter = !intersects || ["activate", "dock-menu", "manual", "second-instance"].includes(source);
+    if (!shouldCenter) return;
+    const width = Math.min(Math.max(bounds.width, 980), workArea.width - 48);
+    const height = Math.min(Math.max(bounds.height, 680), workArea.height - 48);
+    const x = Math.round(workArea.x + (workArea.width - width) / 2);
+    const y = Math.round(workArea.y + (workArea.height - height) / 2);
+    win.setBounds({ x, y, width, height });
+  } catch (error) {
+    logEvent("main-window:place-failed", errorDetails(error));
+  }
 }
 
 process.on("uncaughtException", (error) => {
@@ -225,7 +256,7 @@ app.on("second-instance", (_event, commandLine = []) => {
   }
 
   logEvent("app:second-instance-focus");
-  ensureMainWindow(true);
+  presentMainWindow("second-instance");
 });
 
 function settingsPath() {

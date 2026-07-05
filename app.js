@@ -357,6 +357,7 @@ function renderPage(page) {
 function renderHome() {
   const stats = computeStats();
   const groups = groupHistory(state.history);
+  const recentCount = state.history.length;
   const rows = groups
     .map(
       (group) => `
@@ -368,12 +369,15 @@ function renderHome() {
 
   return `
     <section class="dictation-console">
-      <div class="console-copy">
-        <div class="status-pills">
-          <span class="engine-pill">${escapeHTML(dictationLanguageLabel())}</span>
-          <span class="engine-pill">${escapeHTML(activeStyleSummary())}</span>
+      <div class="console-main">
+        <div class="console-status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div>
+            <strong>Ready for dictation</strong>
+            <small>${escapeHTML(dictationLanguageLabel())} · ${escapeHTML(activeStyleSummary())}</small>
+          </div>
         </div>
-        <h2>Speak once. Paste back to the app you started from.</h2>
+        <h2>Clear speech in, polished text out.</h2>
         <p class="muted">${escapeHTML(finalEngineDescription())}</p>
       </div>
       <div class="console-actions">
@@ -384,35 +388,48 @@ function renderHome() {
     </section>
 
     <div class="control-strip">
-      <label>
+      <label class="control-field">
         <span>Language</span>
         ${renderDictationLanguageSelect("select-field wide-select")}
       </label>
-      <label>
+      <label class="control-field">
         <span>Engine</span>
         <select class="select-field wide-select" data-setting="transcriptionEngine">
           <option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio + MLX fallback</option>
           <option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper only</option>
         </select>
       </label>
-      <label>
+      <label class="control-field">
         <span>Active style</span>
         <button class="select-link" type="button" data-page="style">${escapeHTML(activeStyleSummary())}</button>
       </label>
     </div>
 
-    <div class="grid-2">
-      <section>
-        <div class="toolbar">
-          <div class="toolbar-left"><h2>Recent dictations</h2></div>
-          <div class="toolbar-right"><button class="secondary-button" type="button" data-action="copy-latest-history">Copy latest</button></div>
+    <div class="home-grid">
+      <section class="recent-panel">
+        <div class="section-heading">
+          <div>
+            <h2>Recent dictations</h2>
+            <p class="muted">${recentCount ? `${recentCount.toLocaleString()} saved locally` : "No saved dictations yet"}</p>
+          </div>
+          <button class="secondary-button" type="button" data-action="copy-latest-history">Copy latest</button>
         </div>
         <div class="home-list">${rows || empty("No dictations yet", "New dictations will appear here.")}</div>
       </section>
-      <aside class="stat-stack">
-        <div class="card"><span class="big-number">${stats.totalWords.toLocaleString()}</span><span class="muted">total words</span></div>
-        <div class="card"><span class="big-number">${state.history.length.toLocaleString()}</span><span class="muted">saved dictations</span></div>
-        <div class="card"><h3>Paste target</h3><p class="muted">Target app is captured when you press the global shortcut and verified before paste.</p></div>
+      <aside class="summary-panel">
+        <article class="summary-card">
+          <span class="summary-label">Today</span>
+          <strong>${stats.totalWords.toLocaleString()}</strong>
+          <span class="muted">total words</span>
+          <div class="summary-metrics">
+            <div><b>${recentCount.toLocaleString()}</b><span>dictations</span></div>
+            <div><b>${stats.wpm}</b><span>wpm</span></div>
+          </div>
+        </article>
+        <article class="summary-card subtle-summary">
+          <h3>Paste target</h3>
+          <p class="muted">Captured at shortcut start and checked again before paste.</p>
+        </article>
       </aside>
     </div>
   `;
@@ -422,15 +439,23 @@ function renderLiveTranscriptPanel() {
   const visible = isRecording() || stopInProgress || livePreviewText;
   if (!visible) return "";
   const title = stopInProgress ? "Finalizing" : "Listening";
-  const body = livePreviewText || " ";
+  const body = livePreviewText || "Speak now...";
+  const words = countWords(livePreviewText);
+  const detail = stopInProgress ? "Preparing final text" : livePreviewText ? "Live preview" : "Waiting for speech";
   return `
     <section class="live-draft-card ${livePreviewText ? "has-text" : ""}">
       <div class="live-draft-meter" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-      <div>
-        <strong>${escapeHTML(title)}</strong>
+      <div class="live-draft-main">
+        <div class="live-draft-top">
+          <strong>${escapeHTML(title)}</strong>
+          <span>${escapeHTML(detail)}</span>
+        </div>
         <p>${escapeHTML(body)}</p>
       </div>
-      <time>${escapeHTML(els.timer?.textContent || "00:00")}</time>
+      <div class="live-draft-stats">
+        <time>${escapeHTML(els.timer?.textContent || "00:00")}</time>
+        <span>${words} ${words === 1 ? "word" : "words"}</span>
+      </div>
     </section>
   `;
 }
@@ -1398,7 +1423,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
     } else {
       notify(`Saved: ${text}`);
     }
-    setFlow("Ready", `${entry.words} words / ${data.durationMs}ms`);
+    setFlow("Ready", `${entry.words} words / ${data.durationMs}ms`, { words: entry.words });
     resetActiveRecording();
     render();
   } catch (error) {
@@ -2176,7 +2201,7 @@ function sliceAudioWindow(chunks, maxSamples) {
 function setFlow(title, detail, options = {}) {
   els.flowState.textContent = title;
   els.flowLine.textContent = detail;
-  const words = Number.isFinite(options.words) ? options.words : state.history[0]?.words || 0;
+  const words = Number.isFinite(options.words) ? options.words : 0;
   els.wordCount.textContent = `${words} ${words === 1 ? "word" : "words"}`;
 }
 
