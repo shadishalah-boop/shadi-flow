@@ -254,6 +254,52 @@ h3 {
   margin: 0 auto;
 }
 
+.command-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  margin-bottom: var(--space-4);
+  border: 1px solid rgba(18, 17, 23, 0.08);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--app-shadow-soft);
+  padding: var(--space-5);
+}
+
+.command-panel h2 {
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.command-panel p {
+  margin-bottom: 0;
+}
+
+.command-actions,
+.quick-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.command-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.quick-controls {
+  margin-bottom: var(--space-5);
+}
+
+.quick-controls label {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 240px;
+  color: var(--app-muted);
+  font-size: var(--fs-13);
+  font-weight: 700;
+}
+
 .primary-button,
 .secondary-button,
 .ghost-button,

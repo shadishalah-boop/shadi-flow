@@ -17,6 +17,7 @@ const FLUID_AUDIO_HELPER_NAME = "shadiflow-fluid-helper";
 const GLOBAL_SHORTCUT = "CommandOrControl+Shift+Space";
 const FALLBACK_SHORTCUTS = ["CommandOrControl+Option+Space"];
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const RECENT_PASTE_TARGET_TTL_MS = 15000;
 const PARAKEET_SUPPORTED_LANGUAGES = new Set([
   "",
   "auto",
@@ -296,6 +297,7 @@ async function getRuntimeStatus() {
     localWhisperModel,
     localParakeetModel,
     localFluidAudioStreamingVariant: settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT,
+    dictationLanguage: settings.dictationLanguage || "en",
     localActiveModel: speechEngine === "fluid-parakeet"
       ? "FluidAudio Parakeet TDT v3"
       : speechEngine === "mlx-parakeet"
@@ -422,10 +424,12 @@ async function handleGlobalDictationShortcut() {
     return;
   }
 
-  lastDictationTarget = await refreshPasteTarget("shortcut") || recentPasteTarget;
+  const capturedTarget = await refreshPasteTarget("shortcut");
+  lastDictationTarget = capturedTarget || recentPasteTargetIfFresh();
   logEvent("dictation:target-selected", {
     target: describePasteTarget(lastDictationTarget),
     targetAgeMs: recentPasteTargetAt ? Date.now() - recentPasteTargetAt : null,
+    fallbackUsed: !capturedTarget && Boolean(lastDictationTarget),
   });
   if (!lastDictationTarget) {
     showOverlay({
@@ -587,6 +591,12 @@ function describePasteTarget(target) {
     pid: Number(target.pid) || 0,
     method: target.method || "",
   };
+}
+
+function recentPasteTargetIfFresh() {
+  if (!recentPasteTarget || !recentPasteTargetAt) return null;
+  if (Date.now() - recentPasteTargetAt > RECENT_PASTE_TARGET_TTL_MS) return null;
+  return recentPasteTarget;
 }
 
 function ensureMainWindow(show = true) {
@@ -781,6 +791,7 @@ ipcMain.handle("settings:get", async () => {
     localParakeetModel: settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL,
     localFluidAudioModelVersion: settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION,
     localFluidAudioStreamingVariant: settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT,
+    dictationLanguage: settings.dictationLanguage || "en",
     localWhisperEngine: speechEngine === "fluid-parakeet"
       ? "fluid-parakeet"
       : speechEngine === "mlx-parakeet"
@@ -801,6 +812,7 @@ ipcMain.handle("settings:save", async (_event, settings) => {
     localParakeetModel: String(settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL).trim(),
     localFluidAudioModelVersion: String(settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION).trim(),
     localFluidAudioStreamingVariant: String(settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT).trim(),
+    dictationLanguage: String(settings.dictationLanguage || "en").trim(),
     localWhisperModelPath: String(settings.localWhisperModelPath || "").trim(),
     localWhisperArgs: String(settings.localWhisperArgs || "").trim(),
   });
@@ -831,12 +843,13 @@ ipcMain.handle("audio:stream-start", async (_event, payload = {}) => {
 
   const sessionId = String(payload.sessionId || `stream-${Date.now()}`).trim();
   const variant = fluidAudioStreamingVariant(payload.variant || settings.localFluidAudioStreamingVariant);
+  const language = asrLanguage(payload.language ?? settings.dictationLanguage);
   const started = Date.now();
   const result = await callFluidAudioHelper(helperPath, {
     op: "stream_start",
     sessionId,
     variant,
-    language: payload.language || "",
+    language,
   });
   logEvent("audio:stream-start-result", {
     sessionId,
@@ -1002,15 +1015,16 @@ async function transcribeWithLocalWhisper(payload, settings, options = {}) {
   if (audioBuffer.length > MAX_AUDIO_BYTES) throw new Error("Audio is larger than 25 MB.");
   const inputExtension = audioExtensionForPayload(payload);
   const audioStats = normalizeAudioStats(payload.audioStats);
+  const language = asrLanguage(payload.language ?? settings.dictationLanguage);
 
   const requestedSpeechEngine = normalizeSpeechEngine(
     payload.engine || settings.localSpeechEngine || settings.transcriptionEngine || DEFAULT_SPEECH_ENGINE,
   );
   let speechEngine = requestedSpeechEngine;
-  if ((speechEngine === "fluid-parakeet" || speechEngine === "mlx-parakeet") && !parakeetSupportsLanguage(payload.language || "")) {
+  if ((speechEngine === "fluid-parakeet" || speechEngine === "mlx-parakeet") && !parakeetSupportsLanguage(language)) {
     logEvent("audio:parakeet-language-fallback", {
       engine: speechEngine,
-      language: payload.language || "auto",
+      language: language || "auto",
       fallbackEngine: "mlx-whisper",
     });
     speechEngine = "mlx-whisper";
@@ -1132,7 +1146,7 @@ async function transcribeWithLocalWhisper(payload, settings, options = {}) {
       audioPath,
       outputDir: tempDir,
       outputBase: outBase,
-      language: payload.language || "",
+      language,
       model: speechEngine === "fluid-parakeet"
         ? settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION
         : speechEngine === "mlx-parakeet"
@@ -1809,6 +1823,12 @@ function normalizeSpeechEngine(engine) {
   return DEFAULT_SPEECH_ENGINE;
 }
 
+function asrLanguage(language) {
+  const value = String(language || "").trim().toLowerCase();
+  if (!value || value === "auto") return "";
+  return value;
+}
+
 function workerEngineForSpeechEngine(engine) {
   const value = normalizeSpeechEngine(engine);
   if (value === "mlx-whisper") return "mlx";
@@ -2046,7 +2066,7 @@ async function runInsertSelfTest(text, targetOverride = null) {
 async function insertTextIntoTarget(text, options = {}) {
   const value = String(text || "");
   if (!value.trim()) return { ok: false, message: "No text to insert." };
-  let target = options.targetOverride || (options.background ? lastDictationTarget || recentPasteTarget : null);
+  let target = options.targetOverride || (options.background ? lastDictationTarget || recentPasteTargetIfFresh() : null);
 
   try {
     clipboard.writeText(value);
@@ -2082,6 +2102,10 @@ async function insertTextIntoTarget(text, options = {}) {
       };
     }
 
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.hide();
+    }
+
     const activatedTarget = target ? await activatePasteTarget(target) : true;
     if (target && !activatedTarget) {
       logEvent("text:insert-target-activation-failed", {
@@ -2094,7 +2118,24 @@ async function insertTextIntoTarget(text, options = {}) {
         message: "Text copied, but ShadiFlow could not switch back to the target app.",
       };
     }
-    const result = await pasteClipboardIntoActiveApp();
+    if (target) {
+      const verified = await waitForPasteTargetActive(target, 1600);
+      if (!verified) {
+        const actual = await captureFrontmostApp("insert-verify-failed");
+        logEvent("text:insert-target-verify-failed", {
+          expected: describePasteTarget(target),
+          actual: describePasteTarget(actual),
+          textLength: value.length,
+        });
+        return {
+          ok: false,
+          copied: true,
+          message: `Text copied, but ${target.name || "the target app"} was not active. I did not paste into another app.`,
+        };
+      }
+    }
+
+    const result = await pasteClipboardIntoActiveApp(target);
     logEvent("text:insert-result", {
       ok: Boolean(result.ok),
       copied: true,
@@ -2205,7 +2246,30 @@ async function activatePasteTarget(target) {
   return false;
 }
 
-function pasteClipboardIntoActiveApp() {
+async function waitForPasteTargetActive(target, timeoutMs = 1400) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const active = await captureFrontmostApp("insert-verify");
+    if (samePasteTarget(target, active)) return true;
+    await sleep(80);
+  }
+  return false;
+}
+
+function samePasteTarget(expected, actual) {
+  if (!expected || !actual) return false;
+  const expectedPid = Number(expected.pid) || 0;
+  const actualPid = Number(actual.pid) || 0;
+  if (expectedPid && actualPid && expectedPid === actualPid) return true;
+  const expectedBundle = String(expected.bundle || "").trim();
+  const actualBundle = String(actual.bundle || "").trim();
+  if (expectedBundle && actualBundle && expectedBundle === actualBundle) return true;
+  const expectedName = String(expected.name || "").trim();
+  const actualName = String(actual.name || "").trim();
+  return Boolean(expectedName && actualName && expectedName === actualName);
+}
+
+function pasteClipboardIntoActiveApp(expectedTarget = null) {
   return new Promise((resolve) => {
     if (!hasAccessibilityPermission(false)) {
       resolve({
@@ -2216,7 +2280,22 @@ function pasteClipboardIntoActiveApp() {
       return;
     }
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      if (expectedTarget) {
+        const active = await captureFrontmostApp("paste-before-keystroke");
+        if (!samePasteTarget(expectedTarget, active)) {
+          logEvent("paste:target-changed-before-keystroke", {
+            expected: describePasteTarget(expectedTarget),
+            actual: describePasteTarget(active),
+          });
+          resolve({
+            ok: false,
+            copied: true,
+            message: `Text copied, but ${expectedTarget.name || "the target app"} lost focus before paste.`,
+          });
+          return;
+        }
+      }
       execFile(
         "/usr/bin/osascript",
         ["-e", 'tell application "System Events" to keystroke "v" using command down'],

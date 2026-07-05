@@ -8,12 +8,22 @@ const FLUID_STREAM_LANGUAGES = new Set(["en", "es", "fr", "de", "it", "pt"]);
 const FLUID_STREAM_MAX_QUEUED_CHUNKS = 1400;
 const FLUID_STREAM_BATCH_SAMPLES = 8192;
 const FLUID_STREAM_NEMOTRON_PREROLL_MS = 1120;
-const RELIABLE_FLUID_FINAL_LANGUAGES = new Set(["", "auto", "en"]);
+const RELIABLE_FLUID_FINAL_LANGUAGES = new Set(["en"]);
 const DEFAULT_FLUID_LIVE_MODEL = "auto";
 const fluidLiveModelOptions = [
   ["auto", "Auto: Parakeet English + Nemotron multilingual"],
   ["parakeet-unified-320ms", "Parakeet Unified 0.6B 320ms"],
   ["nemotron-multilingual-latin-1120ms", "Nemotron Multilingual 0.6B Latin 1120ms"],
+];
+const dictationLanguageOptions = [
+  ["auto", "Auto"],
+  ["en", "English"],
+  ["es", "Spanish"],
+  ["fr", "French"],
+  ["de", "German"],
+  ["it", "Italian"],
+  ["pt", "Portuguese"],
+  ["ar", "Arabic"],
 ];
 const builtInCorrections = [
   { term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow", "shatty flow", "shattyflow"] },
@@ -38,13 +48,9 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 const navItems = [
-  ["home", "Home"],
-  ["insights", "Insights"],
-  ["dictionary", "Dictionary"],
+  ["home", "Dictation"],
+  ["dictionary", "Vocabulary"],
   ["snippets", "Snippets"],
-  ["style", "Style"],
-  ["transforms", "Transforms"],
-  ["scratchpad", "Scratchpad"],
 ];
 
 const styleGroups = {
@@ -97,14 +103,9 @@ const styleGroups = {
 };
 
 const settingsSections = [
-  "General",
-  "System",
-  "Vibe coding",
-  "Experimental",
-  "Account",
-  "Team",
-  "Plans and Billing",
-  "Data and Privacy",
+  "Dictation",
+  "Paste",
+  "Data",
 ];
 
 const defaultWords = [
@@ -193,8 +194,9 @@ function loadState() {
 }
 
 function normalizeState(saved) {
+  const page = navItems.some(([id]) => id === saved.page) ? saved.page : "home";
   return {
-    page: saved.page || "home",
+    page,
     insightsTab: saved.insightsTab || "usage",
     dictionaryTab: saved.dictionaryTab || "all",
     snippetsTab: saved.snippetsTab || "all",
@@ -214,7 +216,7 @@ function normalizeState(saved) {
       fluidLiveModel: normalizeFluidLiveModel(
         saved.settings?.fluidLiveModel || saved.settings?.localFluidAudioStreamingVariant,
       ),
-      dictationLanguage: saved.settings?.dictationLanguage || "en",
+      dictationLanguage: normalizeDictationLanguage(saved.settings?.dictationLanguage || "en"),
       appLanguage: saved.settings?.appLanguage || "English",
       variableRecognition: saved.settings?.variableRecognition ?? false,
       fileTagging: saved.settings?.fileTagging ?? false,
@@ -315,13 +317,9 @@ function renderNav() {
 function render(options = {}) {
   renderNav();
   const titles = {
-    home: ["Home", "Get back into flow"],
-    insights: ["Insights", "Understand your voice"],
-    dictionary: ["Dictionary", "Spell the way you do"],
-    snippets: ["Snippets", "Text you should not re-type"],
-    style: ["Style", "Choose how dictation sounds"],
-    transforms: ["Transforms", "Rewrite anywhere you write"],
-    scratchpad: ["Scratchpad", "Quick thoughts to come back to"],
+    home: ["Dictation", "Ready to speak"],
+    dictionary: ["Vocabulary", "Names and terms"],
+    snippets: ["Snippets", "Reusable text"],
   };
   const [kicker, title] = titles[state.page] || titles.home;
   els.pageKicker.textContent = kicker;
@@ -331,12 +329,8 @@ function render(options = {}) {
 }
 
 function renderPage(page) {
-  if (page === "insights") return renderInsights();
   if (page === "dictionary") return renderDictionary();
   if (page === "snippets") return renderSnippets();
-  if (page === "style") return renderStyle();
-  if (page === "transforms") return renderTransforms();
-  if (page === "scratchpad") return renderScratchpad();
   return renderHome();
 }
 
@@ -353,27 +347,44 @@ function renderHome() {
     .join("");
 
   return `
+    <section class="command-panel">
+      <div>
+        <span class="engine-pill">${escapeHTML(dictationLanguageLabel())}</span>
+        <h2>Dictate, then paste exactly where you started.</h2>
+        <p class="muted">${escapeHTML(finalEngineDescription())}</p>
+      </div>
+      <div class="command-actions">
+        <button class="primary-button" type="button" data-action="start-recording">Start dictation</button>
+        <button class="secondary-button" type="button" data-action="open-settings">Settings</button>
+      </div>
+    </section>
+
+    <div class="quick-controls">
+      <label>
+        <span>Language</span>
+        ${renderDictationLanguageSelect("select-field wide-select")}
+      </label>
+      <label>
+        <span>Engine</span>
+        <select class="select-field wide-select" data-setting="transcriptionEngine">
+          <option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio + MLX fallback</option>
+          <option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper only</option>
+        </select>
+      </label>
+    </div>
+
     <div class="grid-2">
       <section>
-        <div class="banner">
-          <h2>Working around other people?</h2>
-          <p>Use the global shortcut to dictate into any text box. ShadiFlow learns your dictionary, snippets, and style locally.</p>
-          <div class="banner-actions">
-            <button class="secondary-button" type="button" data-action="start-recording">Try it now</button>
-            <button class="secondary-button" type="button" data-page="dictionary">Add vocabulary</button>
-          </div>
+        <div class="toolbar">
+          <div class="toolbar-left"><h2>Recent dictations</h2></div>
+          <div class="toolbar-right"><button class="secondary-button" type="button" data-action="copy-latest-history">Copy latest</button></div>
         </div>
-        <div class="home-list">${rows || empty("No dictations yet", "Use the shortcut or Dictate button to create your first entry.")}</div>
+        <div class="home-list">${rows || empty("No dictations yet", "New dictations will appear here.")}</div>
       </section>
       <aside class="stat-stack">
         <div class="card"><span class="big-number">${stats.totalWords.toLocaleString()}</span><span class="muted">total words</span></div>
-        <div class="card"><span class="big-number">${stats.wpm}</span><span class="muted">wpm</span></div>
-        <div class="card"><span class="big-number">${stats.streak}</span><span class="muted">day streak</span></div>
-        <div class="card">
-          <h3>Your Voice Profile</h3>
-          <p class="muted">Unlocks at 2,000 words. Current voice profile is built from your local dictation history.</p>
-          <div class="progress"><span style="width:${Math.min(100, Math.round((stats.totalWords / 2000) * 100))}%"></span></div>
-        </div>
+        <div class="card"><span class="big-number">${state.history.length.toLocaleString()}</span><span class="muted">saved dictations</span></div>
+        <div class="card"><h3>Paste target</h3><p class="muted">Target app is captured when you press the global shortcut and verified before paste.</p></div>
       </aside>
     </div>
   `;
@@ -471,26 +482,17 @@ function renderLeaderboard() {
 }
 
 function renderDictionary() {
-  const items = filteredScoped(state.dictionary, state.dictionaryTab);
+  const items = state.dictionary;
   return `
     <div class="toolbar">
-      <div class="toolbar-left">${renderTabs([["all", "All"], ["personal", "Personal"], ["team", "Shared with team"]], state.dictionaryTab, "dictionary-tab")}</div>
+      <div class="toolbar-left"><h2>Vocabulary</h2></div>
       <div class="toolbar-right">
         <button class="icon-button" type="button" data-action="sort-dictionary" title="Sort">A</button>
-        <button class="icon-button" type="button" data-action="refresh">R</button>
         <button class="primary-button" type="button" data-action="add-word">Add new</button>
       </div>
     </div>
-    <div class="promo-card">
-      <h2>ShadiFlow spells the way you do.</h2>
-      <p>Add personal terms, names, company jargon, client names, and industry-specific language.</p>
-      <div class="chip-row">
-        <button class="chip" type="button" data-action="add-word">Add new word</button>
-        ${state.dictionary.slice(0, 5).map((word) => `<span class="chip">${escapeHTML(word.term)}</span>`).join("")}
-      </div>
-    </div>
     <section class="table-card card">
-      ${items.length ? items.map(renderWordRow).join("") : empty("No words here", "Add vocabulary or switch tabs.")}
+      ${items.length ? items.map(renderWordRow).join("") : empty("No vocabulary yet", "Saved names and terms will appear here.")}
     </section>
   `;
 }
@@ -502,7 +504,6 @@ function renderWordRow(word) {
       <p class="muted">${escapeHTML((word.aliases || []).join(", "))}</p>
       <div class="row-actions">
         <button class="mini-button" type="button" data-action="edit-word" data-id="${word.id}">Edit</button>
-        <button class="mini-button" type="button" data-action="toggle-word-scope" data-id="${word.id}">${word.scope === "team" ? "Personal" : "Share"}</button>
         <button class="mini-button" type="button" data-action="delete-word" data-id="${word.id}">Delete</button>
       </div>
     </article>
@@ -510,26 +511,17 @@ function renderWordRow(word) {
 }
 
 function renderSnippets() {
-  const items = filteredScoped(state.snippets, state.snippetsTab);
+  const items = state.snippets;
   return `
     <div class="toolbar">
-      <div class="toolbar-left">${renderTabs([["all", "All"], ["personal", "Personal"], ["team", "Shared with team"]], state.snippetsTab, "snippets-tab")}</div>
+      <div class="toolbar-left"><h2>Snippets</h2></div>
       <div class="toolbar-right">
         <button class="icon-button" type="button" data-action="sort-snippets" title="Sort">A</button>
-        <button class="icon-button" type="button" data-action="refresh">R</button>
         <button class="primary-button" type="button" data-action="add-snippet">Add new</button>
       </div>
     </div>
-    <div class="promo-card">
-      <h2>The stuff you should not have to re-type.</h2>
-      <p>Save text you type often, then say the cue word to drop it in instantly.</p>
-      <div class="chip-row">
-        <button class="chip" type="button" data-action="add-snippet">Add new snippet</button>
-        ${state.snippets.slice(0, 5).map((snippet) => `<span class="chip">${escapeHTML(snippet.cue)}</span>`).join("")}
-      </div>
-    </div>
     <section class="table-card card">
-      ${items.length ? items.map(renderSnippetRow).join("") : empty("No snippets here", "Create a reusable block of text.")}
+      ${items.length ? items.map(renderSnippetRow).join("") : empty("No snippets yet", "Saved reusable text will appear here.")}
     </section>
   `;
 }
@@ -665,6 +657,9 @@ function handleClick(event) {
 
   if (action === "start-recording") toggleRecording({ autoInsert: false, source: "workspace" });
   else if (action === "open-settings") openSettingsModal();
+  else if (action === "open-accessibility-settings") openAccessibilitySettings();
+  else if (action === "open-data-folder") openDataFolder();
+  else if (action === "copy-latest-history") copyLatestHistory();
   else if (action === "help") notify("ShadiFlow is running locally. Use Cmd+Shift+Space to dictate anywhere.");
   else if (action === "invite") notify("Team invites are local-only in this build.");
   else if (action === "refer") notify("Referral copied as a placeholder.");
@@ -699,11 +694,33 @@ function handleClick(event) {
   else if (action === "delete-note") deleteItem("notes", id);
 }
 
+async function openAccessibilitySettings() {
+  await window.clearScribe?.openAccessibilitySettings?.();
+}
+
+async function openDataFolder() {
+  await window.clearScribe?.openSettingsFolder?.();
+}
+
+function copyLatestHistory() {
+  const latest = state.history[0]?.text || "";
+  if (!latest) {
+    notify("No dictation history yet.");
+    return;
+  }
+  copyValue(latest);
+}
+
 function handleChange(event) {
   if (event.target.matches("[data-setting]")) {
-    state.settings[event.target.dataset.setting] = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+    const key = event.target.dataset.setting;
+    state.settings[key] = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+    if (key === "dictationLanguage") state.settings.dictationLanguage = normalizeDictationLanguage(state.settings.dictationLanguage);
     persist();
-    if (["transcriptionEngine", "fluidLiveModel"].includes(event.target.dataset.setting)) saveDesktopRuntimeSettings();
+    if (["transcriptionEngine", "fluidLiveModel", "dictationLanguage"].includes(key)) {
+      saveDesktopRuntimeSettings();
+      render({ persist: false });
+    }
   }
   if (event.target.matches("[data-account]")) {
     state.account[event.target.dataset.account] = event.target.value;
@@ -717,7 +734,6 @@ function openWordModal(id = "") {
     <div class="form-grid">
       <label>Preferred spelling<input class="field" id="word-term" value="${escapeAttr(word.term)}" /></label>
       <label>Spoken aliases<input class="field" id="word-aliases" value="${escapeAttr((word.aliases || []).join(", "))}" /></label>
-      <label>Scope<select class="select-field" id="word-scope"><option value="personal" ${word.scope !== "team" ? "selected" : ""}>Personal</option><option value="team" ${word.scope === "team" ? "selected" : ""}>Shared with team</option></select></label>
       <label><input type="checkbox" id="word-correct" ${word.correct ? "checked" : ""} /> Correct misspellings automatically</label>
     </div>
   `, "Save word", () => {
@@ -725,7 +741,7 @@ function openWordModal(id = "") {
       id: id || uid(),
       term: value("#word-term"),
       aliases: value("#word-aliases").split(",").map((part) => part.trim()).filter(Boolean),
-      scope: value("#word-scope"),
+      scope: "personal",
       correct: document.querySelector("#word-correct").checked,
       favorite: word.favorite || false,
     };
@@ -741,10 +757,9 @@ function openSnippetModal(id = "") {
     <div class="form-grid">
       <label>Shortcut phrase<input class="field" id="snippet-cue" value="${escapeAttr(snippet.cue)}" /></label>
       <label>Expansion<textarea class="field" id="snippet-body">${escapeHTML(snippet.body)}</textarea></label>
-      <label>Scope<select class="select-field" id="snippet-scope"><option value="personal" ${snippet.scope !== "team" ? "selected" : ""}>Personal</option><option value="team" ${snippet.scope === "team" ? "selected" : ""}>Shared with team</option></select></label>
     </div>
   `, "Save snippet", () => {
-    const next = { id: id || uid(), cue: value("#snippet-cue"), body: value("#snippet-body"), scope: value("#snippet-scope") };
+    const next = { id: id || uid(), cue: value("#snippet-cue"), body: value("#snippet-body"), scope: "personal" };
     if (!next.cue || !next.body) return false;
     upsert("snippets", next);
     return true;
@@ -795,8 +810,8 @@ function openNoteModal(id = "") {
   });
 }
 
-function openSettingsModal(active = "General") {
-  let activeSection = active;
+function openSettingsModal(active = "Dictation") {
+  let activeSection = settingsSections.includes(active) ? active : "Dictation";
   const renderSettings = () => {
     openModal("Settings", `
       <div class="settings-layout">
@@ -817,47 +832,27 @@ function openSettingsModal(active = "General") {
 }
 
 function settingsSectionHTML(section) {
-  if (section === "General") {
+  if (section === "Dictation") {
     return `
-      ${settingRow("Shortcuts", "Hold fn and speak. Global shortcut is handled by macOS.", `<button class="secondary-button" type="button">Change</button>`)}
-      ${settingRow("Microphone", state.settings.microphone, `<button class="secondary-button" type="button" data-action="start-recording">Test</button>`)}
-      ${settingRow("Speech Engine", "Choose the local runtime family.", `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio local</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper Large V3 Turbo</option></select>`)}
+      ${settingRow("Dictation language", finalEngineDescription(), renderDictationLanguageSelect("select-field wide-select"))}
+      ${settingRow("Speech engine", speechEngineDescription(), `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio + MLX fallback</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper only</option></select>`)}
       ${selectedTranscriptionEngine() === "fluid-parakeet" ? settingRow("FluidAudio Live Model", fluidLiveModelDescription(), renderFluidLiveModelSelect()) : ""}
-      ${settingRow("Dictation Language", "Use Auto when switching between languages.", `<select class="select-field" data-setting="dictationLanguage"><option value="auto" ${selected("auto", state.settings.dictationLanguage)}>Auto</option><option value="en" ${selected("en", state.settings.dictationLanguage)}>English</option><option value="es" ${selected("es", state.settings.dictationLanguage)}>Spanish</option><option value="fr" ${selected("fr", state.settings.dictationLanguage)}>French</option><option value="de" ${selected("de", state.settings.dictationLanguage)}>German</option><option value="it" ${selected("it", state.settings.dictationLanguage)}>Italian</option><option value="pt" ${selected("pt", state.settings.dictationLanguage)}>Portuguese</option><option value="ar" ${selected("ar", state.settings.dictationLanguage)}>Arabic</option></select>`)}
-      ${settingRow("App Language", "Preferred app UI language.", `<select class="select-field" data-setting="appLanguage"><option>English</option><option>Spanish</option><option>Arabic</option></select>`)}
+      ${settingRow("Microphone", state.settings.microphone, `<button class="secondary-button" type="button" data-action="start-recording">Test mic</button>`)}
     `;
   }
-  if (section === "Vibe coding") {
+  if (section === "Paste") {
     return `
-      ${settingRow("Variable recognition", "Better understands variables in VS Code, Cursor, and Windsurf.", `<button class="toggle ${state.settings.variableRecognition ? "is-on" : ""}" type="button" data-toggle-setting="variableRecognition"></button>`)}
-      ${settingRow("File tagging in chat", "Automatically tags files in your IDE.", `<button class="toggle ${state.settings.fileTagging ? "is-on" : ""}" type="button" data-toggle-setting="fileTagging"></button>`)}
+      ${settingRow("Automatic paste", "Requires macOS Accessibility permission. ShadiFlow now verifies the original target app before pasting.", `<button class="secondary-button" type="button" data-action="open-accessibility-settings">Open macOS Settings</button>`)}
+      ${settingRow("Fallback behavior", "If target verification fails, text is copied but not pasted into another app.", `<button class="secondary-button" type="button" data-action="copy-latest-history">Copy latest</button>`)}
     `;
   }
-  if (section === "Account") {
+  if (section === "Data") {
     return `
-      ${settingRow("First name", "", `<input class="field" data-account="firstName" value="${escapeAttr(state.account.firstName)}" />`)}
-      ${settingRow("Last name", "", `<input class="field" data-account="lastName" value="${escapeAttr(state.account.lastName)}" />`)}
-      ${settingRow("Email", "", `<input class="field" data-account="email" value="${escapeAttr(state.account.email)}" />`)}
-      <button class="secondary-button" type="button">Sign out</button>
+      ${settingRow("Local history", `${state.history.length.toLocaleString()} saved dictations on this device.`, `<button class="secondary-button" type="button" data-action="open-data-folder">Open folder</button>`)}
+      ${settingRow("Privacy", "No cloud sync or account backend is enabled in this build.", `<span class="engine-pill">Local only</span>`)}
     `;
   }
-  if (section === "Plans and Billing") {
-    return `
-      ${settingRow("ShadiFlow Pro", "Local build. No billing is connected.", `<button class="primary-button" type="button">Explore features</button>`)}
-      ${settingRow("Enterprise", "SSO, team-wide data controls, and more would need a backend.", `<button class="secondary-button" type="button">Upgrade</button>`)}
-    `;
-  }
-  if (section === "Data and Privacy") {
-    return `
-      ${settingRow("Privacy Mode", "Dictation data is kept local in this build.", `<button class="toggle ${state.settings.privacyMode ? "is-on" : ""}" type="button" data-toggle-setting="privacyMode"></button>`)}
-      ${settingRow("Cloud Sync", "Disabled unless a server is added.", `<button class="toggle ${state.settings.cloudSync ? "is-on" : ""}" type="button" data-toggle-setting="cloudSync"></button>`)}
-      ${settingRow("Context awareness", "Use local app context for dictionary and snippets.", `<button class="toggle ${state.settings.contextAwareness ? "is-on" : ""}" type="button" data-toggle-setting="contextAwareness"></button>`)}
-      ${settingRow("Local data storage", state.settings.localStorage, `<select class="select-field" data-setting="localStorage"><option>Store data locally</option><option>Ask every time</option></select>`)}
-    `;
-  }
-  return `
-    ${settingRow(section, "This section is wired locally and ready for product-specific options.", `<button class="secondary-button" type="button">Configure</button>`)}
-  `;
+  return "";
 }
 
 function settingRow(title, detail, control) {
@@ -875,6 +870,19 @@ function fluidLiveModelDescription() {
   return "Force Parakeet Unified for English live dictation.";
 }
 
+function speechEngineDescription() {
+  if (selectedTranscriptionEngine() === "mlx-whisper") return "Uses MLX Whisper large-v3-turbo for every selected language.";
+  return "English final dictation uses FluidAudio. Other selected languages use MLX Whisper for complete final transcripts.";
+}
+
+function finalEngineDescription() {
+  const language = normalizeDictationLanguage(state.settings.dictationLanguage);
+  if (language === "en" && selectedTranscriptionEngine() === "fluid-parakeet") return "English final pass uses FluidAudio Parakeet.";
+  if (language === "auto") return "Auto uses MLX Whisper for broad multilingual detection.";
+  if (selectedTranscriptionEngine() === "fluid-parakeet") return `${dictationLanguageLabel(language)} final pass uses MLX Whisper; live preview uses FluidAudio when available.`;
+  return `${dictationLanguageLabel(language)} is passed directly to MLX Whisper.`;
+}
+
 function openModal(title, body, submitLabel, onSubmit, options = {}) {
   els.modalTitle.textContent = title;
   els.modalBody.innerHTML = body;
@@ -890,7 +898,7 @@ function openModal(title, body, submitLabel, onSubmit, options = {}) {
       const key = button.dataset.toggleSetting;
       state.settings[key] = !state.settings[key];
       persist();
-      openSettingsModal(document.querySelector(".settings-nav .is-active")?.dataset.settingsSection || "General");
+      openSettingsModal(document.querySelector(".settings-nav .is-active")?.dataset.settingsSection || "Dictation");
     });
   });
   document.querySelector("#modal-submit").onclick = () => {
@@ -923,7 +931,12 @@ async function startRecording(options = {}) {
   try {
     stopInProgress = false;
     activeRecording = { autoInsert: Boolean(options.autoInsert), source: options.source || "workspace" };
-    logDesktopEvent("recording:start-request", activeRecording);
+    logDesktopEvent("recording:start-request", {
+      ...activeRecording,
+      language: selectedWhisperLanguage() || "auto",
+      engine: selectedTranscriptionEngine(),
+      finalEngine: finalTranscriptionEngineForRecording(),
+    });
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -956,6 +969,9 @@ async function startRecording(options = {}) {
       mode: recordingMode,
       sampleRate: wavSampleRate || 0,
       mimeType: recordingMimeType || "",
+      language: selectedWhisperLanguage() || "auto",
+      engine: selectedTranscriptionEngine(),
+      finalEngine: finalTranscriptionEngineForRecording(),
     });
     startLivePreview();
   } catch (error) {
@@ -1304,7 +1320,22 @@ function audioExtensionForMime(mimeType = "") {
 }
 
 function selectedWhisperLanguage() {
-  return state.settings.dictationLanguage === "auto" ? "" : state.settings.dictationLanguage;
+  const language = normalizeDictationLanguage(state.settings.dictationLanguage);
+  return language === "auto" ? "" : language;
+}
+
+function normalizeDictationLanguage(language) {
+  const value = String(language || "").trim().toLowerCase();
+  return dictationLanguageOptions.some(([id]) => id === value) ? value : "en";
+}
+
+function dictationLanguageLabel(language = state.settings.dictationLanguage) {
+  const normalized = normalizeDictationLanguage(language);
+  return dictationLanguageOptions.find(([id]) => id === normalized)?.[1] || "English";
+}
+
+function renderDictationLanguageSelect(className = "select-field") {
+  return `<select class="${className}" data-setting="dictationLanguage">${dictationLanguageOptions.map(([value, label]) => `<option value="${escapeAttr(value)}" ${selected(value, normalizeDictationLanguage(state.settings.dictationLanguage))}>${escapeHTML(label)}</option>`).join("")}</select>`;
 }
 
 function selectedTranscriptionEngine() {
@@ -1345,6 +1376,7 @@ async function saveDesktopRuntimeSettings() {
       localSpeechEngine: selectedTranscriptionEngine(),
       transcriptionEngine: selectedTranscriptionEngine(),
       localFluidAudioStreamingVariant: selectedFluidLiveModel(),
+      dictationLanguage: state.settings.dictationLanguage,
     });
   } catch {
     // The renderer setting is still persisted locally.
