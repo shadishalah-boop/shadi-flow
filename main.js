@@ -11,6 +11,7 @@ const DEFAULT_LOCAL_WHISPER_COMMAND = "whisper";
 const DEFAULT_LOCAL_WHISPER_MODEL = "large-v3-turbo";
 const DEFAULT_LOCAL_PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3";
 const DEFAULT_FLUID_AUDIO_MODEL_VERSION = "v3";
+const DEFAULT_FLUID_AUDIO_STREAMING_VARIANT = "parakeet-unified-320ms";
 const DEFAULT_SPEECH_ENGINE = "fluid-parakeet";
 const FLUID_AUDIO_HELPER_NAME = "shadiflow-fluid-helper";
 const GLOBAL_SHORTCUT = "CommandOrControl+Shift+Space";
@@ -294,6 +295,7 @@ async function getRuntimeStatus() {
     localWhisperCommand,
     localWhisperModel,
     localParakeetModel,
+    localFluidAudioStreamingVariant: settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT,
     localActiveModel: speechEngine === "fluid-parakeet"
       ? "FluidAudio Parakeet TDT v3"
       : speechEngine === "mlx-parakeet"
@@ -778,6 +780,7 @@ ipcMain.handle("settings:get", async () => {
     localWhisperModel: settings.localWhisperModel || DEFAULT_LOCAL_WHISPER_MODEL,
     localParakeetModel: settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL,
     localFluidAudioModelVersion: settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION,
+    localFluidAudioStreamingVariant: settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT,
     localWhisperEngine: speechEngine === "fluid-parakeet"
       ? "fluid-parakeet"
       : speechEngine === "mlx-parakeet"
@@ -797,6 +800,7 @@ ipcMain.handle("settings:save", async (_event, settings) => {
     localWhisperModel: String(settings.localWhisperModel || DEFAULT_LOCAL_WHISPER_MODEL).trim(),
     localParakeetModel: String(settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL).trim(),
     localFluidAudioModelVersion: String(settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION).trim(),
+    localFluidAudioStreamingVariant: String(settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT).trim(),
     localWhisperModelPath: String(settings.localWhisperModelPath || "").trim(),
     localWhisperArgs: String(settings.localWhisperArgs || "").trim(),
   });
@@ -818,6 +822,95 @@ ipcMain.handle("audio:transcribe", async (_event, payload) => {
 ipcMain.handle("audio:preview", async (_event, payload) => {
   const settings = await readSettings();
   return transcribeWithLocalWhisper({ ...payload, preview: true }, settings, { preview: true });
+});
+
+ipcMain.handle("audio:stream-start", async (_event, payload = {}) => {
+  const settings = await readSettings();
+  const helperPath = await resolveFluidAudioHelperPath();
+  if (!helperPath) throw new Error("FluidAudio helper is not available.");
+
+  const sessionId = String(payload.sessionId || `stream-${Date.now()}`).trim();
+  const variant = fluidAudioStreamingVariant(payload.variant || settings.localFluidAudioStreamingVariant);
+  const started = Date.now();
+  const result = await callFluidAudioHelper(helperPath, {
+    op: "stream_start",
+    sessionId,
+    variant,
+    language: payload.language || "",
+  });
+  logEvent("audio:stream-start-result", {
+    sessionId,
+    variant: result.variant || variant,
+    model: result.model || "",
+    durationMs: Date.now() - started,
+    workerDurationMs: Number(result.workerDurationMs || 0),
+  });
+  return result;
+});
+
+ipcMain.handle("audio:stream-audio", async (_event, payload = {}) => {
+  const helperPath = await resolveFluidAudioHelperPath();
+  if (!helperPath) throw new Error("FluidAudio helper is not available.");
+
+  const sessionId = String(payload.sessionId || "").trim();
+  if (!sessionId) throw new Error("Missing streaming session id.");
+  const pcmBuffer = Buffer.from(payload.pcmBuffer || []);
+  if (!pcmBuffer.length) return { ok: true, text: "", partial: true };
+  if (pcmBuffer.length > 2 * 1024 * 1024) throw new Error("Streaming audio chunk is too large.");
+
+  const started = Date.now();
+  const result = await callFluidAudioHelper(helperPath, {
+    op: "stream_audio",
+    sessionId,
+    pcmBase64: pcmBuffer.toString("base64"),
+    sampleRate: Number(payload.sampleRate || 48000),
+    channels: Number(payload.channels || 1),
+  });
+  logEvent("audio:stream-audio-result", {
+    sessionId,
+    textLength: String(result.text || "").length,
+    textPreview: transcriptPreview(result.text || ""),
+    durationMs: Date.now() - started,
+    workerDurationMs: Number(result.workerDurationMs || 0),
+    audioDurationMs: Number(result.audioDurationMs || 0),
+  });
+  return result;
+});
+
+ipcMain.handle("audio:stream-finish", async (_event, payload = {}) => {
+  const helperPath = await resolveFluidAudioHelperPath();
+  if (!helperPath) throw new Error("FluidAudio helper is not available.");
+
+  const sessionId = String(payload.sessionId || "").trim();
+  if (!sessionId) throw new Error("Missing streaming session id.");
+  const started = Date.now();
+  const result = await callFluidAudioHelper(helperPath, {
+    op: "stream_finish",
+    sessionId,
+  });
+  logEvent("audio:stream-finish-result", {
+    sessionId,
+    textLength: String(result.text || "").length,
+    textPreview: transcriptPreview(result.text || ""),
+    durationMs: Date.now() - started,
+    workerDurationMs: Number(result.workerDurationMs || 0),
+    audioDurationMs: Number(result.audioDurationMs || 0),
+    variant: result.variant || "",
+  });
+  return result;
+});
+
+ipcMain.handle("audio:stream-cancel", async (_event, payload = {}) => {
+  const helperPath = await resolveFluidAudioHelperPath();
+  if (!helperPath) return { ok: true };
+
+  const sessionId = String(payload.sessionId || "").trim();
+  const result = await callFluidAudioHelper(helperPath, {
+    op: "stream_cancel",
+    sessionId,
+  });
+  logEvent("audio:stream-cancel-result", { sessionId, ok: Boolean(result.ok) });
+  return result;
 });
 
 ipcMain.handle("recording:stop", async () => {
@@ -1282,21 +1375,24 @@ async function warmFluidAudioHelperInBackground() {
     const helperPath = await resolveFluidAudioHelperPath();
     if (!helperPath) return;
 
-    const modelVersion = fluidAudioModelVersion(settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION);
+    const streamingVariant = fluidAudioStreamingVariant(
+      settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT,
+    );
     const started = Date.now();
-    logEvent("audio:fluid-warm-start", { modelVersion });
+    logEvent("audio:fluid-stream-warm-start", { streamingVariant });
     const result = await callFluidAudioHelper(helperPath, {
-      op: "warm",
-      modelVersion,
+      op: "stream_warm",
+      variant: streamingVariant,
     });
-    logEvent("audio:fluid-warm-result", {
-      engine: result.engine || "fluid-parakeet",
-      model: result.model || `FluidAudio Parakeet TDT ${modelVersion}`,
+    logEvent("audio:fluid-stream-warm-result", {
+      engine: result.engine || "fluid-streaming",
+      model: result.model || "FluidAudio streaming",
+      variant: result.variant || streamingVariant,
       durationMs: Date.now() - started,
       workerDurationMs: Number(result.workerDurationMs || 0),
     });
   })().catch((error) => {
-    logEvent("audio:fluid-warm-failed", errorDetails(error));
+    logEvent("audio:fluid-stream-warm-failed", errorDetails(error));
     stopFluidAudioHelper();
   }).finally(() => {
     warmFluidAudioHelperPromise = null;
@@ -1784,6 +1880,23 @@ function fluidAudioModelVersion(model = "") {
   const value = String(model || "").trim().toLowerCase();
   if (value === "v2" || value.includes("0.6b-v2")) return "v2";
   return "v3";
+}
+
+function fluidAudioStreamingVariant(variant = "") {
+  const value = String(variant || "").trim().toLowerCase();
+  const supported = new Set([
+    "parakeet-unified-320ms",
+    "parakeet-unified-640ms",
+    "parakeet-unified-1120ms",
+    "parakeet-unified-2080ms",
+    "parakeet-eou-160ms",
+    "parakeet-eou-320ms",
+    "parakeet-eou-1280ms",
+    "nemotron-560ms",
+    "nemotron-1120ms",
+    "nemotron-2240ms",
+  ]);
+  return supported.has(value) ? value : DEFAULT_FLUID_AUDIO_STREAMING_VARIANT;
 }
 
 function parakeetSupportsLanguage(language) {

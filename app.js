@@ -4,6 +4,13 @@ const DEFAULT_TRANSCRIPTION_ENGINE = "fluid-parakeet";
 const LIVE_PREVIEW_INTERVAL_MS = 900;
 const LIVE_PREVIEW_MIN_MS = 900;
 const LIVE_PREVIEW_MAX_MS = 8000;
+const FLUID_STREAM_MIN_LANGUAGE = new Set(["en"]);
+const FLUID_STREAM_MAX_QUEUED_CHUNKS = 1400;
+const FLUID_STREAM_BATCH_SAMPLES = 8192;
+const builtInCorrections = [
+  { term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow"] },
+  { term: "Shadi", aliases: ["shady", "shaddy", "shaddi"] },
+];
 
 window.addEventListener("error", (event) => {
   window.clearScribe?.logEvent?.("error", {
@@ -93,7 +100,7 @@ const settingsSections = [
 ];
 
 const defaultWords = [
-  { id: uid(), term: "ShadiFlow", aliases: ["shadi flow", "shady flow"], scope: "personal", correct: true, favorite: true },
+  { id: uid(), term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow"], scope: "personal", correct: true, favorite: true },
   { id: uid(), term: "Wispr Flow", aliases: ["whisper flow", "wispr flow"], scope: "personal", correct: true, favorite: false },
   { id: uid(), term: "Shadi", aliases: ["shady", "shadi"], scope: "personal", correct: true, favorite: false },
   { id: uid(), term: "Supabase", aliases: ["super base", "supa base"], scope: "team", correct: true, favorite: false },
@@ -128,6 +135,7 @@ let livePreviewTimerId = null;
 let livePreviewInFlight = false;
 let livePreviewSeq = 0;
 let livePreviewText = "";
+let fluidStreamState = null;
 let stopInProgress = false;
 let activeRecording = { autoInsert: false, source: "workspace" };
 
@@ -1035,7 +1043,9 @@ async function startWavRecorder(stream) {
   audioProcessor.onaudioprocess = (event) => {
     if (recordingMode !== "wav") return;
     const input = event.inputBuffer.getChannelData(0);
-    audioChunks.push(new Float32Array(input));
+    const chunk = new Float32Array(input);
+    audioChunks.push(chunk);
+    enqueueFluidStreamChunk(chunk);
   };
 
   audioSource.connect(audioProcessor);
@@ -1063,9 +1073,10 @@ async function handleWavRecordingStopped() {
   const sampleRate = wavSampleRate || 48000;
   const audioStats = measureAudioChunks(chunks);
   cleanupAudioRecorder();
+  const streamResult = await finishFluidStreamingPreview({ timeoutMs: 12000 });
   const wavBuffer = encodeWav(chunks, sampleRate);
   const blob = new Blob([wavBuffer], { type: "audio/wav" });
-  await finishRecording(blob, audioStats);
+  await finishRecording(blob, audioStats, streamResult);
 }
 
 async function handleMediaRecorderStopped() {
@@ -1075,7 +1086,7 @@ async function handleMediaRecorderStopped() {
   await finishRecording(blob);
 }
 
-async function finishRecording(blob, audioStats = null) {
+async function finishRecording(blob, audioStats = null, streamResult = null) {
   const recordedMs = Date.now() - startedAt;
   const recording = { ...activeRecording };
   logDesktopEvent("recording:finish-start", {
@@ -1084,6 +1095,8 @@ async function finishRecording(blob, audioStats = null) {
     mimeType: blob.type || "",
     recordedMs,
     audioStats,
+    streamingTextLength: String(streamResult?.text || "").trim().length,
+    streamingEngine: streamResult?.engine || "",
   });
   if (blob.size < 1400 || recordedMs < 700) {
     setFlow("Too short", "Hold a little longer", { words: 0 });
@@ -1094,22 +1107,7 @@ async function finishRecording(blob, audioStats = null) {
   }
 
   try {
-    logDesktopEvent("recording:transcribe-start", {
-      ...recording,
-      bytes: blob.size,
-      mimeType: blob.type || "",
-      language: selectedWhisperLanguage() || "auto",
-      engine: selectedTranscriptionEngine(),
-      audioStats,
-    });
-    const data = await window.clearScribe.transcribe({
-      audioBuffer: await blob.arrayBuffer(),
-      mimeType: blob.type || "audio/webm",
-      filename: `shadiflow-${Date.now()}${audioExtensionForMime(blob.type)}`,
-      language: selectedWhisperLanguage(),
-      engine: selectedTranscriptionEngine(),
-      audioStats,
-    });
+    const data = await transcribeRecordingBlob(blob, audioStats, recording, streamResult);
     const transcript = String(data.text || "").trim();
     logDesktopEvent("recording:transcribe-result", {
       ...recording,
@@ -1195,6 +1193,60 @@ async function finishRecording(blob, audioStats = null) {
     });
     resetActiveRecording();
   }
+}
+
+async function transcribeRecordingBlob(blob, audioStats, recording, streamResult = null) {
+  const streamingTranscript = String(streamResult?.text || "").trim();
+  if (hasMeaningfulSpeech(streamingTranscript)) {
+    const durationMs = Number(streamResult.audioDurationMs || streamResult.durationMs || 0);
+    const data = {
+      text: streamingTranscript,
+      durationMs,
+      workerDurationMs: Number(streamResult.workerDurationMs || 0),
+      audioPrepDurationMs: 0,
+      engine: streamResult.engine || "fluid-streaming",
+      model: streamResult.model || streamResult.variant || "FluidAudio streaming",
+      languageFallback: false,
+    };
+    logDesktopEvent("recording:stream-used", {
+      ...recording,
+      textLength: streamingTranscript.length,
+      transcriptPreview: transcriptPreview(streamingTranscript),
+      durationMs,
+      workerDurationMs: data.workerDurationMs,
+      engine: data.engine,
+      model: data.model,
+      variant: streamResult.variant || "",
+    });
+    return data;
+  }
+
+  if (streamResult) {
+    logDesktopEvent("recording:stream-empty-fallback", {
+      ...recording,
+      textLength: streamingTranscript.length,
+      engine: streamResult.engine || "",
+      model: streamResult.model || "",
+      variant: streamResult.variant || "",
+    });
+  }
+
+  logDesktopEvent("recording:transcribe-start", {
+    ...recording,
+    bytes: blob.size,
+    mimeType: blob.type || "",
+    language: selectedWhisperLanguage() || "auto",
+    engine: selectedTranscriptionEngine(),
+    audioStats,
+  });
+  return window.clearScribe.transcribe({
+    audioBuffer: await blob.arrayBuffer(),
+    mimeType: blob.type || "audio/webm",
+    filename: `shadiflow-${Date.now()}${audioExtensionForMime(blob.type)}`,
+    language: selectedWhisperLanguage(),
+    engine: selectedTranscriptionEngine(),
+    audioStats,
+  });
 }
 
 function chooseAudioMimeType() {
@@ -1469,9 +1521,14 @@ function updateTimer(reset = false) {
 
 function startLivePreview() {
   stopLivePreview();
-  if (!window.clearScribe?.previewTranscription) return;
+  if (!window.clearScribe?.previewTranscription && !window.clearScribe?.startStreamingTranscription) return;
   livePreviewSeq += 1;
   livePreviewText = "";
+  if (shouldUseFluidStreaming()) {
+    startFluidStreamingPreview();
+    render({ persist: false });
+    return;
+  }
   const seq = livePreviewSeq;
   livePreviewTimerId = window.setInterval(() => requestLivePreview(seq), LIVE_PREVIEW_INTERVAL_MS);
   window.setTimeout(() => requestLivePreview(seq), LIVE_PREVIEW_MIN_MS);
@@ -1483,8 +1540,240 @@ function stopLivePreview(options = {}) {
   livePreviewTimerId = null;
   livePreviewSeq += 1;
   livePreviewInFlight = false;
+  if (!options.keepText) cancelFluidStreamingPreview();
   if (!options.keepText) livePreviewText = "";
   render({ persist: false });
+}
+
+function shouldUseFluidStreaming() {
+  const language = String(selectedWhisperLanguage() || "auto").toLowerCase();
+  return selectedTranscriptionEngine() === "fluid-parakeet" &&
+    recordingMode === "wav" &&
+    FLUID_STREAM_MIN_LANGUAGE.has(language) &&
+    Boolean(window.clearScribe?.startStreamingTranscription) &&
+    Boolean(window.clearScribe?.pushStreamingAudio) &&
+    Boolean(window.clearScribe?.finishStreamingTranscription);
+}
+
+function startFluidStreamingPreview() {
+  if (fluidStreamState) cancelFluidStreamingPreview();
+  const sessionId = `stream-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const stream = {
+    sessionId,
+    active: true,
+    accepting: true,
+    ready: false,
+    failed: false,
+    busy: false,
+    queue: [],
+    text: "",
+    sampleRate: wavSampleRate || 48000,
+    startPromise: null,
+  };
+  fluidStreamState = stream;
+  stream.startPromise = window.clearScribe.startStreamingTranscription({
+    sessionId,
+    language: selectedWhisperLanguage(),
+    variant: "parakeet-unified-320ms",
+  }).then((data) => {
+    if (fluidStreamState !== stream || !stream.active) return data;
+    stream.ready = true;
+    logDesktopEvent("recording:stream-started", {
+      ...activeRecording,
+      sessionId,
+      variant: data?.variant || "parakeet-unified-320ms",
+      model: data?.model || "",
+      workerDurationMs: data?.workerDurationMs || 0,
+    });
+    pumpFluidStream();
+    return data;
+  }).catch((error) => {
+    markFluidStreamFailed(error, "start");
+    throw error;
+  });
+}
+
+function enqueueFluidStreamChunk(chunk) {
+  const stream = fluidStreamState;
+  if (!stream || !stream.active || !stream.accepting || stream.failed) return;
+  stream.queue.push(chunk);
+  while (stream.queue.length > FLUID_STREAM_MAX_QUEUED_CHUNKS) stream.queue.shift();
+  pumpFluidStream();
+}
+
+async function pumpFluidStream() {
+  const stream = fluidStreamState;
+  if (!stream || !stream.active || stream.failed || stream.busy) return;
+  stream.busy = true;
+  try {
+    await stream.startPromise;
+    while (stream.active && !stream.failed && stream.queue.length) {
+      const batch = takeFluidStreamBatch(stream);
+      if (!batch) break;
+      await sendFluidStreamBatch(stream, batch);
+    }
+  } catch (error) {
+    markFluidStreamFailed(error, "audio");
+  } finally {
+    stream.busy = false;
+    if (stream.active && !stream.failed && stream.queue.length) {
+      window.setTimeout(pumpFluidStream, 0);
+    }
+  }
+}
+
+function takeFluidStreamBatch(stream) {
+  if (!stream.queue.length) return null;
+  const chunks = [];
+  let samples = 0;
+  while (stream.queue.length && samples < FLUID_STREAM_BATCH_SAMPLES) {
+    const chunk = stream.queue.shift();
+    chunks.push(chunk);
+    samples += chunk.length;
+  }
+  return { chunks, samples };
+}
+
+async function sendFluidStreamBatch(stream, batch) {
+  const pcm = mergeFloat32Chunks(batch.chunks, batch.samples);
+  const data = await window.clearScribe.pushStreamingAudio({
+    sessionId: stream.sessionId,
+    pcmBuffer: pcm.buffer,
+    sampleRate: stream.sampleRate,
+    channels: 1,
+  });
+  updateFluidStreamText(stream, data);
+  return data;
+}
+
+function mergeFloat32Chunks(chunks, totalSamples) {
+  if (chunks.length === 1 && chunks[0].length === totalSamples) return chunks[0];
+  const merged = new Float32Array(totalSamples);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return merged;
+}
+
+function updateFluidStreamText(stream, data) {
+  if (!stream || stream.failed) return;
+  const transcript = String(data?.text || "").trim();
+  if (!hasMeaningfulSpeech(transcript)) return;
+  const text = prepareTranscriptText(transcript);
+  if (!hasMeaningfulSpeech(text) || text === stream.text) return;
+  stream.text = text;
+  livePreviewText = text;
+  setFlow("Listening", text, { words: countWords(text) });
+  render({ persist: false });
+  publishOverlay({
+    type: "recording",
+    elapsed: els.timer.textContent,
+    text,
+    detail: "Live transcript",
+  });
+  logDesktopEvent("recording:stream-preview", {
+    ...activeRecording,
+    sessionId: stream.sessionId,
+    textLength: text.length,
+    transcriptPreview: transcriptPreview(text),
+    workerDurationMs: data?.workerDurationMs || 0,
+    audioDurationMs: data?.audioDurationMs || 0,
+    engine: data?.engine || "fluid-streaming",
+    variant: data?.variant || "",
+  });
+}
+
+function markFluidStreamFailed(error, stage = "unknown") {
+  const stream = fluidStreamState;
+  if (stream) stream.failed = true;
+  logDesktopEvent("recording:stream-failed", {
+    stage,
+    message: String(error?.message || error).slice(0, 800),
+  });
+}
+
+async function finishFluidStreamingPreview(options = {}) {
+  const stream = fluidStreamState;
+  if (!stream) return null;
+  stream.accepting = false;
+  const timeoutMs = options.timeoutMs || 12000;
+
+  try {
+    await withTimeout(stream.startPromise, timeoutMs, "Streaming model did not become ready.");
+    await waitForFluidStreamIdle(stream, Math.min(4000, timeoutMs));
+    while (!stream.failed && stream.queue.length) {
+      const batch = takeFluidStreamBatch(stream);
+      if (!batch) break;
+      await withTimeout(sendFluidStreamBatch(stream, batch), timeoutMs, "Streaming audio flush timed out.");
+    }
+    const data = await withTimeout(
+      window.clearScribe.finishStreamingTranscription({ sessionId: stream.sessionId }),
+      timeoutMs,
+      "Streaming finish timed out.",
+    );
+    updateFluidStreamText(stream, data);
+    logDesktopEvent("recording:stream-finished", {
+      ...activeRecording,
+      sessionId: stream.sessionId,
+      textLength: String(data?.text || "").length,
+      transcriptPreview: transcriptPreview(data?.text || ""),
+      workerDurationMs: data?.workerDurationMs || 0,
+      audioDurationMs: data?.audioDurationMs || 0,
+      variant: data?.variant || "",
+    });
+    return data;
+  } catch (error) {
+    markFluidStreamFailed(error, "finish");
+    try {
+      await window.clearScribe?.cancelStreamingTranscription?.({ sessionId: stream.sessionId });
+    } catch {
+      // Batch transcription remains the fallback.
+    }
+    return null;
+  } finally {
+    stream.active = false;
+    if (fluidStreamState === stream) fluidStreamState = null;
+  }
+}
+
+function cancelFluidStreamingPreview() {
+  const stream = fluidStreamState;
+  fluidStreamState = null;
+  if (!stream) return;
+  stream.active = false;
+  stream.accepting = false;
+  stream.queue = [];
+  window.clearScribe?.cancelStreamingTranscription?.({ sessionId: stream.sessionId }).catch(() => {});
+}
+
+function waitForFluidStreamIdle(stream, timeoutMs = 4000) {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!stream.busy) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+      window.setTimeout(check, 25);
+    };
+    check();
+  });
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId = null;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]).finally(() => window.clearTimeout(timeoutId));
 }
 
 async function requestLivePreview(seq = livePreviewSeq) {
@@ -1618,7 +1907,7 @@ function normalizeSpokenPunctuation(text) {
 function applyDictionary(text) {
   let next = text;
   let fixes = 0;
-  state.dictionary.forEach((word) => {
+  [...builtInCorrections, ...state.dictionary].forEach((word) => {
     (word.aliases || []).forEach((alias) => {
       if (!alias.trim()) return;
       const before = next;
