@@ -1,0 +1,28 @@
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+release/
+*.dmg
+*.zip
+
+# Runtime/cache artifacts
+__pycache__/
+*.pyc
+runtime-cache/
+runtimes/
+*.log
+
+# Local environment/config
+.env
+.env.*
+!.env.example
+
+# Editor/system files
+.idea/
+.vscode/
+*.swp

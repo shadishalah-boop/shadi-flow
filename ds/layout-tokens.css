@@ -1,0 +1,47 @@
+/* =========================================================================
+   PREPLY DESIGN SYSTEM — layout & shape tokens
+   Codified rules for spacing, radii, borders, elevation usage.
+   Import after colors_and_type.css.
+   ========================================================================= */
+
+:root {
+  /* ---- Surface borders ----
+     ALL interactive elements (buttons, chips, inputs, switches off, etc.)
+     use 2px borders. Decorative dividers are 1px. */
+  --border-width-interactive: 2px;
+  --border-width-divider:     1px;
+
+  /* ---- Product card guidance ----
+     We do NOT ship a Card component class. When you build a product card,
+     use these values directly (not via a class):
+        border:        2px solid var(--border-default);
+        border-radius: 4px;
+        background:    var(--bg-surface);
+     Padding is contextual (16–24px is typical).
+   */
+  --product-card-radius:       4px;
+  --product-card-border-width: 2px;
+
+  /* ---- Gap aliases (mirror --space-*) ----
+     For flex/grid `gap`. Use these names for consistency in new code. */
+  --gap-xs: var(--space-1);   /* 4px  — within a tight cluster (badge icon+label) */
+  --gap-sm: var(--space-2);   /* 8px  — control-internal */
+  --gap-md: var(--space-4);   /* 16px — between controls in a row */
+  --gap-lg: var(--space-6);   /* 24px — between groups inside a section */
+  --gap-xl: var(--space-10);  /* 40px — between sections */
+
+  /* ---- Section spacing ----
+     Standard vertical rhythm between page sections. */
+  --section-gap-tight:   48px;
+  --section-gap-default: 64px;
+  --section-gap-loose:   96px;
+
+  /* ---- Elevation usage rules ----
+       --shadow-xs   sticky chrome (top nav) — barely there
+       --shadow-sm   resting elevated card / dropdown trigger
+       --shadow-md   floating card on hover, popover
+       --shadow-lg   modal / sheet
+     Cards at rest are border-defined; reach for shadow only when something
+     genuinely floats above the page.
+   */
+}

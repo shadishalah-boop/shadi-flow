@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShadiFlow</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-icon" src="./assets/shadiflow-icon-source.png" alt="" />
+          <div>
+            <strong>ShadiFlow</strong>
+            <small>Voice workspace</small>
+          </div>
+        </div>
+
+        <nav class="nav" id="nav" aria-label="Main navigation"></nav>
+
+        <div class="sidebar-bottom">
+          <button class="nav-item subtle" type="button" data-action="invite">Invite your team</button>
+          <button class="nav-item subtle" type="button" data-action="refer">Refer a friend</button>
+          <button class="nav-item subtle" type="button" data-action="open-settings">Settings</button>
+          <button class="nav-item subtle" type="button" data-action="help">Help</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="main-header">
+          <div>
+            <p class="eyebrow" id="page-kicker">Home</p>
+            <h1 id="page-title">Get back into flow</h1>
+          </div>
+          <div class="header-actions">
+            <span class="engine-pill" id="engine-state">Checking engine</span>
+            <button class="icon-button" type="button" data-action="open-settings" title="Settings" aria-label="Settings">S</button>
+            <button class="primary-button" type="button" data-action="start-recording">Dictate</button>
+          </div>
+        </header>
+
+        <section class="page" id="page"></section>
+      </main>
+
+      <section class="flow-bar" id="flow-bar" aria-live="polite">
+        <button class="flow-mic" id="flow-mic" type="button" aria-label="Start dictation">
+          <span></span>
+        </button>
+        <div class="flow-copy">
+          <strong id="flow-state">Ready</strong>
+          <small id="flow-line">Shortcut or mic to dictate anywhere</small>
+        </div>
+        <div class="flow-meter" aria-hidden="true">
+          <i></i><i></i><i></i><i></i>
+        </div>
+        <div class="flow-stats">
+          <span id="timer">00:00</span>
+          <span id="word-count">0 words</span>
+        </div>
+      </section>
+    </div>
+
+    <dialog id="modal">
+      <form method="dialog" class="modal-card" id="modal-card">
+        <header>
+          <h2 id="modal-title">Dialog</h2>
+          <button class="icon-button" value="cancel" type="submit" aria-label="Close">x</button>
+        </header>
+        <div id="modal-body"></div>
+        <footer id="modal-actions"></footer>
+      </form>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

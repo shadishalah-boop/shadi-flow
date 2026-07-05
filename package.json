@@ -1,0 +1,49 @@
+{
+  "name": "shadi-flow",
+  "version": "0.9.23",
+  "description": "Desktop voice dictation and flow-writing app.",
+  "main": "main.js",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shadishalah-boop/shadi-flow.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-builder --mac dir",
+    "dist": "electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "app.shadiflow.desktop",
+    "productName": "ShadiFlow",
+    "files": [
+      "index.html",
+      "styles.css",
+      "overlay.html",
+      "overlay.css",
+      "overlay.js",
+      "app.js",
+      "main.js",
+      "whisper_worker.py",
+      "preload.js",
+      "ds/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "target": [
+        "dir"
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "ShadiFlow needs microphone access to transcribe your speech.",
+        "NSSpeechRecognitionUsageDescription": "ShadiFlow can use speech recognition as a fallback transcription mode."
+      }
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

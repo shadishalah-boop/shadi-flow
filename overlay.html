@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShadiFlow Dictation</title>
+    <link rel="stylesheet" href="./overlay.css" />
+  </head>
+  <body>
+    <main class="hud" data-state="starting">
+      <section class="status-card">
+        <span class="signal" aria-hidden="true">
+          <i></i><i></i><i></i><i></i>
+        </span>
+        <div class="status-copy">
+          <strong id="title">Listening</strong>
+          <span id="detail">Press shortcut again to stop</span>
+        </div>
+        <span class="timer" id="elapsed">00:00</span>
+        <button class="stop-button" id="stop-recording" type="button">Stop</button>
+        <p class="live-transcript" id="live-transcript"></p>
+      </section>
+
+      <section class="permission-card">
+        <header>
+          <span class="signal large" aria-hidden="true">
+            <i></i><i></i><i></i><i></i>
+          </span>
+          <div>
+            <strong id="expanded-title">Enable automatic paste</strong>
+            <span id="expanded-detail">Text copied. Allow ShadiFlow once, then it can paste for you.</span>
+          </div>
+          <button class="icon-button" id="close-overlay" type="button" aria-label="Close">x</button>
+        </header>
+        <p class="transcript" id="transcript"></p>
+        <div class="actions">
+          <button class="secondary-button" id="copy-transcript" type="button">Copy text</button>
+          <button class="primary-button" id="primary-action" type="button">Open Settings</button>
+        </div>
+      </section>
+    </main>
+    <script src="./overlay.js"></script>
+  </body>
+</html>

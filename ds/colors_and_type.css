@@ -1,0 +1,340 @@
+/* =========================================================================
+   PREPLY DESIGN TOKENS
+   Colors + Type — canonical primitive tokens from preply/design-system.
+   ========================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ---------- FIGTREE (product UI) ---------- */
+/* Figtree 400–900 variable, served locally. Split by subset so browsers
+   only download the range of glyphs they need. */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('fonts/Figtree.var.latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('fonts/Figtree.var.latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Figtree';
+  font-style: italic;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('fonts/Figtree.var.italic.latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Figtree';
+  font-style: italic;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('fonts/Figtree.var.italic.latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---------- PREPLY BRAND FONTS ---------- */
+/* PreplyInter — product UI grotesk. Use the variable font when available,
+   fall back to static cuts for older browsers. */
+@font-face {
+  font-family: 'PreplyInter';
+  src: url('fonts/PreplyInter.var.woff2') format('woff2-variations'),
+       url('fonts/PreplyInter.var.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PreplyInter';
+  src: url('fonts/PreplyInter.regular.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PreplyInter';
+  src: url('fonts/PreplyInter.italic.woff2') format('woff2');
+  font-weight: 400; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: 'PreplyInter';
+  src: url('fonts/PreplyInter.medium.woff2') format('woff2');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PreplyInter';
+  src: url('fonts/PreplyInter.medium.italic.woff2') format('woff2');
+  font-weight: 500; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: 'PreplyInter';
+  src: url('fonts/PreplyInter.bold.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PreplyInter';
+  src: url('fonts/PreplyInter.bold.italic.woff2') format('woff2');
+  font-weight: 700; font-style: italic; font-display: swap;
+}
+
+/* Platform — marketing display face */
+@font-face {
+  font-family: 'Platform';
+  src: url('fonts/Platform-Regular-Web.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Platform';
+  src: url('fonts/Platform-Medium-Web.woff2') format('woff2');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* ---------- PRIMITIVE COLOR TOKENS ---------- */
+  /* Pink */
+  --pink-50:  #FFEBF3;
+  --pink-100: #FFDBE9;
+  --pink-200: #FFC2D9;
+  --pink-300: #FE9FC3;
+  --pink-400: #FF7AAC;
+  --pink-500: #D13D76;
+  --pink-600: #B32357;
+  --pink-700: #901443;
+  --pink-800: #760530;
+
+  /* Yellow */
+  --yellow-50:  #FFFCEB;
+  --yellow-100: #FFF5C2;
+  --yellow-200: #FFEF9E;
+  --yellow-300: #FFE875;
+  --yellow-400: #FFDF3D;
+  --yellow-500: #F6C823;
+  --yellow-600: #D09C0B;
+  --yellow-700: #966208;
+  --yellow-800: #704C06;
+
+  /* Blue */
+  --blue-50:  #EBF3FF;
+  --blue-100: #CCE2FF;
+  --blue-200: #99C5FF;
+  --blue-300: #57A0FF;
+  --blue-400: #2885FD;
+  --blue-500: #006AF5;
+  --blue-600: #0450B4;
+  --blue-700: #033C87;
+  --blue-800: #052F66;
+
+  /* Red */
+  --red-50:  #FFECEB;
+  --red-100: #FFE2E0;
+  --red-200: #FDC2BE;
+  --red-300: #F87E77;
+  --red-400: #F54238;
+  --red-500: #C9160D;
+  --red-600: #A3120A;
+  --red-700: #880D07;
+  --red-800: #63110D;
+
+  /* Teal */
+  --teal-50:  #EEFCFA;
+  --teal-100: #D8F8F2;
+  --teal-200: #B4F3E7;
+  --teal-300: #7BEAD6;
+  --teal-400: #3DDABE;
+  --teal-500: #19AC91;
+  --teal-600: #067560;
+  --teal-700: #0D594B;
+  --teal-800: #0E4037;
+
+  /* Grey */
+  --grey-0:   #FFFFFF;
+  --grey-50:  #F4F4F8;
+  --grey-100: #EBEBF1;
+  --grey-200: #DCDCE5;
+  --grey-300: #C5C5D1;
+  --grey-400: #A8A8B6;
+  --grey-500: #6A697C;
+  --grey-600: #4D4C5C;
+  --grey-700: #302F3B;
+  --grey-800: #1C1B23;
+  --grey-900: #121117;
+
+  /* ---------- BRAND ALIASES ---------- */
+  --preply-black:  var(--grey-900);
+  --preply-pink:   var(--pink-500);   /* primary action fill */
+  --preply-pink-hover: var(--pink-400);
+  --preply-pink-press: var(--pink-600);
+  --preply-yellow: var(--yellow-400);
+  --preply-blue:   var(--blue-500);
+  --preply-teal:   var(--teal-500);
+  --preply-red:    var(--red-500);
+
+  /* ---------- SEMANTIC FOREGROUND ---------- */
+  --fg-1: var(--grey-900);
+  --fg-2: var(--grey-600);
+  --fg-3: var(--grey-500);
+  --fg-disabled: var(--grey-300);
+  --fg-on-brand: #FFFFFF;
+  --fg-on-dark:  #FFFFFF;
+  --fg-link:     var(--grey-900);
+  --fg-success:  var(--teal-600);
+  --fg-warning:  var(--yellow-800);
+  --fg-danger:   var(--red-600);
+
+  /* ---------- SEMANTIC BACKGROUND ---------- */
+  /* Page is pure white. The off-white look comes from sunken regions, never the page itself. */
+  --bg-page:     var(--grey-0);
+  --bg-surface:  var(--grey-0);
+  --bg-muted:    var(--grey-50);
+  --bg-sunken:   var(--grey-100);
+  --bg-brand:    var(--pink-500);
+  --bg-dark:     var(--grey-900);
+  --bg-success:  var(--teal-100);
+  --bg-warning:  var(--yellow-100);
+  --bg-danger:   var(--red-100);
+
+  /* ---------- BORDERS ---------- */
+  --border-subtle:  var(--grey-100);
+  --border-default: var(--grey-200);
+  --border-strong:  var(--grey-400);
+  --border-focus:   var(--grey-900);
+
+  /* ---------- TYPE FAMILIES ---------- */
+  --font-ui: 'Figtree', 'PreplyInter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-display: 'Platform', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---------- TYPE SCALE ---------- */
+  --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-15: 15px; --fs-16: 16px;
+  --fs-18: 18px; --fs-20: 20px; --fs-22: 22px; --fs-24: 24px; --fs-28: 28px;
+  --fs-32: 32px; --fs-40: 40px; --fs-48: 48px; --fs-56: 56px; --fs-64: 64px; --fs-80: 80px;
+
+  --lh-tight: 1.1; --lh-snug: 1.25; --lh-normal: 1.45; --lh-relaxed: 1.6;
+  --tracking-tight: -0.02em; --tracking-normal: 0; --tracking-wide: 0.02em;
+
+  /* ---------- RADII ----------
+     Preply's 'action.base' radius is squircle (12px), NOT pill.
+     Pills are reserved for chips/badges. */
+  --radius-xs: 4px; --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
+  --radius-xl: 20px; --radius-2xl: 24px; --radius-3xl: 32px; --radius-pill: 999px;
+  --radius-action: 12px;   /* button, input, card body */
+  --radius-action-sm: 10px;
+  --radius-action-lg: 14px;
+
+  /* ---------- SPACING (4pt grid) ---------- */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --space-12: 48px; --space-16: 64px; --space-20: 80px; --space-24: 96px;
+
+  /* ---------- SHADOWS ---------- */
+  --shadow-xs: 0 1px 2px rgba(18, 17, 23, 0.04);
+  --shadow-sm: 0 2px 4px rgba(18, 17, 23, 0.06), 0 1px 2px rgba(18, 17, 23, 0.04);
+  --shadow-md: 0 6px 16px rgba(18, 17, 23, 0.08);
+  --shadow-lg: 0 12px 32px rgba(18, 17, 23, 0.12);
+
+  /* ---------- MOTION ---------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 120ms; --dur: 200ms; --dur-slow: 360ms;
+}
+
+/* =========================================================================
+   SEMANTIC TYPE ROLES
+   ========================================================================= */
+
+body {
+  font-family: var(--font-ui);
+  color: var(--fg-1);
+  background: var(--bg-page);
+  font-size: var(--fs-16);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* -------- HEADINGS — Platform Medium --------
+   All headings are Platform 500. Italic on <em> drops to the regular cut
+   to match the brand's mixed roman/italic headlines. */
+.heading-huge,
+.heading-extra-large,
+.heading-large,
+.heading-medium,
+.heading-small {
+  font-family: var(--font-display); font-weight: 500; color: var(--fg-1);
+}
+.heading-huge        { font-size: 64px; line-height: 64px; letter-spacing: -0.005em; }
+.heading-extra-large { font-size: 48px; line-height: 52px; letter-spacing: 0; }
+.heading-large       { font-size: 32px; line-height: 36px; letter-spacing: 0.01em; }
+.heading-medium      { font-size: 24px; line-height: 32px; letter-spacing: 0.0125em; }
+.heading-small       { font-size: 20px; line-height: 24px; letter-spacing: 0.0175em; }
+
+.heading-huge em, .heading-extra-large em,
+.heading-large em, .heading-medium em, .heading-small em {
+  font-style: italic; font-weight: 400;
+}
+
+/* Use default heading tags with Preply roles */
+h1, .h1 { font-family: var(--font-display); font-weight: 500; font-size: 48px; line-height: 52px; letter-spacing: 0; color: var(--fg-1); }
+h2, .h2 { font-family: var(--font-display); font-weight: 500; font-size: 32px; line-height: 36px; letter-spacing: 0.01em; color: var(--fg-1); }
+h3, .h3 { font-family: var(--font-display); font-weight: 500; font-size: 24px; line-height: 32px; letter-spacing: 0.0125em; color: var(--fg-1); }
+h4, .h4 { font-family: var(--font-display); font-weight: 500; font-size: 20px; line-height: 24px; letter-spacing: 0.0175em; color: var(--fg-1); }
+h5, .h5 { font-family: var(--font-ui); font-weight: 600; font-size: 16px; line-height: 24px; color: var(--fg-1); }
+
+/* -------- BODY — Figtree (regular / italic / semibold / semibold-italic) --------
+   Letter-spacing on body.large is weight-sensitive: semibold tightens by
+   -0.5%, semibold-italic by -0.25%; regular has no override. */
+p, .body-default { font-family: var(--font-ui); font-weight: 400; font-size: 16px; line-height: 24px; letter-spacing: 0; color: var(--fg-1); }
+.body-large      { font-family: var(--font-ui); font-weight: 400; font-size: 20px; line-height: 28px; letter-spacing: 0; color: var(--fg-1); }
+.body-large.body-semibold         { font-weight: 600; letter-spacing: -0.005em; }
+.body-large.body-semibold-italic  { font-weight: 600; font-style: italic; letter-spacing: -0.0025em; }
+.body-small      { font-family: var(--font-ui); font-weight: 400; font-size: 14px; line-height: 20px; letter-spacing: 0.005em; color: var(--fg-1); }
+.body-caption    { font-family: var(--font-ui); font-weight: 400; font-size: 12px; line-height: 16px; letter-spacing: 0.01em; color: var(--fg-1); }
+
+.body-large strong, .body-default strong, .body-small strong, .body-caption strong,
+p strong { font-weight: 600; }
+
+/* -------- LINKS — Figtree SemiBold, underlined -------- */
+.link-large   { font-family: var(--font-ui); font-weight: 600; font-size: 20px; line-height: 28px; letter-spacing: 0; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1.5px; color: inherit; }
+.link-default { font-family: var(--font-ui); font-weight: 600; font-size: 16px; line-height: 24px; letter-spacing: 0.005em; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1.5px; color: inherit; }
+.link-small   { font-family: var(--font-ui); font-weight: 600; font-size: 14px; line-height: 20px; letter-spacing: 0.01em; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1.5px; color: inherit; }
+
+/* -------- BUTTONS — Figtree SemiBold -------- */
+.button-label-large,
+.button-label-medium { font-family: var(--font-ui); font-weight: 600; font-size: 18px; line-height: 24px; letter-spacing: 0.005em; }
+.button-label-small       { font-family: var(--font-ui); font-weight: 600; font-size: 14px; line-height: 16px; letter-spacing: 0.0125em; }
+.button-label-extra-small { font-family: var(--font-ui); font-weight: 600; font-size: 12px; line-height: 12px; letter-spacing: 0.015em; }
+
+/* -------- Legacy aliases (keep existing components working) -------- */
+.display-xl { font-family: var(--font-display); font-weight: 500; font-size: 64px; line-height: 64px; letter-spacing: -0.005em; }
+.display-lg { font-family: var(--font-display); font-weight: 500; font-size: 48px; line-height: 52px; }
+.display-md { font-family: var(--font-display); font-weight: 500; font-size: 32px; line-height: 36px; letter-spacing: 0.01em; }
+.display-sm { font-family: var(--font-display); font-weight: 500; font-size: 24px; line-height: 32px; letter-spacing: 0.0125em; }
+.display-xl em, .display-lg em, .display-md em, .display-sm em { font-style: italic; font-weight: 400; }
+.body     { font-family: var(--font-ui); font-weight: 400; font-size: 16px; line-height: 24px; color: var(--fg-1); }
+.body-lg  { font-size: 20px; line-height: 28px; }
+.body-sm  { font-size: 14px; line-height: 20px; }
+.body-xs  { font-size: 12px; line-height: 16px; }
+
+.label    { font-weight: 500; font-size: 14px; line-height: 20px; color: var(--fg-1); }
+.label-sm { font-weight: 500; font-size: 12px; line-height: 16px; }
+.caption  { font-family: var(--font-ui); font-weight: 400; font-size: 12px; line-height: 16px; color: var(--fg-2); }
+.eyebrow  { font-family: var(--font-ui); font-weight: 600; font-size: 13px; line-height: 1; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-2); }
+
+code, kbd, .mono { font-family: var(--font-mono); font-size: 0.95em; }
+
+a {
+  color: var(--fg-link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: currentColor;
+}
+a:hover { text-decoration-thickness: 2px; }
