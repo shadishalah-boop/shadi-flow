@@ -8,6 +8,12 @@ const FLUID_STREAM_LANGUAGES = new Set(["en", "es", "fr", "de", "it", "pt"]);
 const FLUID_STREAM_MAX_QUEUED_CHUNKS = 1400;
 const FLUID_STREAM_BATCH_SAMPLES = 8192;
 const FLUID_STREAM_NEMOTRON_PREROLL_MS = 1120;
+const DEFAULT_FLUID_LIVE_MODEL = "auto";
+const fluidLiveModelOptions = [
+  ["auto", "Auto: Parakeet English + Nemotron multilingual"],
+  ["parakeet-unified-320ms", "Parakeet Unified 0.6B 320ms"],
+  ["nemotron-multilingual-latin-1120ms", "Nemotron Multilingual 0.6B Latin 1120ms"],
+];
 const builtInCorrections = [
   { term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow", "shatty flow", "shattyflow"] },
   { term: "Shadi", aliases: ["shady", "shaddy", "shaddi"] },
@@ -204,6 +210,9 @@ function normalizeState(saved) {
       shortcut: saved.settings?.shortcut || "Cmd+Shift+Space",
       microphone: saved.settings?.microphone || "Built-in mic",
       transcriptionEngine: normalizeTranscriptionEngine(saved.settings?.transcriptionEngine),
+      fluidLiveModel: normalizeFluidLiveModel(
+        saved.settings?.fluidLiveModel || saved.settings?.localFluidAudioStreamingVariant,
+      ),
       dictationLanguage: saved.settings?.dictationLanguage || "en",
       appLanguage: saved.settings?.appLanguage || "English",
       variableRecognition: saved.settings?.variableRecognition ?? false,
@@ -283,7 +292,7 @@ async function checkRuntime() {
     }
     const engine = selectedTranscriptionEngine();
     const engineLabel = engine === "fluid-parakeet"
-      ? "FluidAudio Parakeet"
+      ? "FluidAudio"
       : engine === "mlx-parakeet"
         ? "MLX Parakeet"
         : engine === "mlx-whisper"
@@ -291,8 +300,11 @@ async function checkRuntime() {
           : status.localWhisperEngine === "mlx-whisper"
             ? "MLX Whisper"
             : "Local Whisper";
+    const activeModel = engine === "fluid-parakeet"
+      ? activeFluidLiveModelLabel()
+      : status.localActiveModel || status.localWhisperModel || "large-v3-turbo";
     els.engineState.textContent = status.localWhisperReady
-      ? `${engineLabel} / ${status.localActiveModel || status.localWhisperModel || "large-v3-turbo"}`
+      ? `${engineLabel} / ${activeModel}`
       : `${engineLabel} missing`;
   } catch {
     els.engineState.textContent = "Runtime unavailable";
@@ -696,7 +708,7 @@ function handleChange(event) {
   if (event.target.matches("[data-setting]")) {
     state.settings[event.target.dataset.setting] = event.target.type === "checkbox" ? event.target.checked : event.target.value;
     persist();
-    if (event.target.dataset.setting === "transcriptionEngine") saveDesktopRuntimeSettings();
+    if (["transcriptionEngine", "fluidLiveModel"].includes(event.target.dataset.setting)) saveDesktopRuntimeSettings();
   }
   if (event.target.matches("[data-account]")) {
     state.account[event.target.dataset.account] = event.target.value;
@@ -814,7 +826,8 @@ function settingsSectionHTML(section) {
     return `
       ${settingRow("Shortcuts", "Hold fn and speak. Global shortcut is handled by macOS.", `<button class="secondary-button" type="button">Change</button>`)}
       ${settingRow("Microphone", state.settings.microphone, `<button class="secondary-button" type="button" data-action="start-recording">Test</button>`)}
-      ${settingRow("Speech Engine", "Use FluidAudio for native Apple Neural Engine dictation; MLX stays available as fallback.", `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio Parakeet TDT 0.6B v3</option><option value="mlx-parakeet" ${selected("mlx-parakeet", state.settings.transcriptionEngine)}>MLX Parakeet TDT 0.6B v3</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper Large V3 Turbo</option><option value="openai-whisper" ${selected("openai-whisper", state.settings.transcriptionEngine)}>OpenAI Whisper CLI</option></select>`)}
+      ${settingRow("Speech Engine", "Choose the local runtime family.", `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio local</option><option value="mlx-parakeet" ${selected("mlx-parakeet", state.settings.transcriptionEngine)}>MLX Parakeet TDT 0.6B v3</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper Large V3 Turbo</option><option value="openai-whisper" ${selected("openai-whisper", state.settings.transcriptionEngine)}>OpenAI Whisper CLI</option></select>`)}
+      ${selectedTranscriptionEngine() === "fluid-parakeet" ? settingRow("FluidAudio Live Model", fluidLiveModelDescription(), renderFluidLiveModelSelect()) : ""}
       ${settingRow("Dictation Language", "Use Auto when switching between languages.", `<select class="select-field" data-setting="dictationLanguage"><option value="auto" ${selected("auto", state.settings.dictationLanguage)}>Auto</option><option value="en" ${selected("en", state.settings.dictationLanguage)}>English</option><option value="es" ${selected("es", state.settings.dictationLanguage)}>Spanish</option><option value="fr" ${selected("fr", state.settings.dictationLanguage)}>French</option><option value="de" ${selected("de", state.settings.dictationLanguage)}>German</option><option value="it" ${selected("it", state.settings.dictationLanguage)}>Italian</option><option value="pt" ${selected("pt", state.settings.dictationLanguage)}>Portuguese</option><option value="ar" ${selected("ar", state.settings.dictationLanguage)}>Arabic</option></select>`)}
       ${settingRow("App Language", "Preferred app UI language.", `<select class="select-field" data-setting="appLanguage"><option>English</option><option>Spanish</option><option>Arabic</option></select>`)}
     `;
@@ -854,6 +867,17 @@ function settingsSectionHTML(section) {
 
 function settingRow(title, detail, control) {
   return `<div class="settings-row"><div><strong>${escapeHTML(title)}</strong><p class="muted">${escapeHTML(detail || "")}</p></div><div>${control}</div></div>`;
+}
+
+function renderFluidLiveModelSelect() {
+  return `<select class="select-field wide-select" data-setting="fluidLiveModel">${fluidLiveModelOptions.map(([value, label]) => `<option value="${escapeAttr(value)}" ${selected(value, selectedFluidLiveModel())}>${escapeHTML(label)}</option>`).join("")}</select>`;
+}
+
+function fluidLiveModelDescription() {
+  const model = selectedFluidLiveModel();
+  if (model === "auto") return "English uses Parakeet Unified. Spanish, French, German, Italian, and Portuguese use Nemotron Multilingual.";
+  if (model.startsWith("nemotron-multilingual")) return "Force Nemotron Multilingual for supported Latin-script languages.";
+  return "Force Parakeet Unified for English live dictation.";
 }
 
 function openModal(title, body, submitLabel, onSubmit, options = {}) {
@@ -1271,6 +1295,10 @@ function selectedTranscriptionEngine() {
   return normalizeTranscriptionEngine(state.settings.transcriptionEngine);
 }
 
+function selectedFluidLiveModel() {
+  return normalizeFluidLiveModel(state.settings.fluidLiveModel);
+}
+
 function normalizeTranscriptionEngine(engine) {
   const value = String(engine || "").trim().toLowerCase();
   if (value === "fluid" || value === "fluid-audio" || value === "fluidaudio" || value === "fluid-parakeet") return "fluid-parakeet";
@@ -1280,12 +1308,27 @@ function normalizeTranscriptionEngine(engine) {
   return DEFAULT_TRANSCRIPTION_ENGINE;
 }
 
+function normalizeFluidLiveModel(model) {
+  const value = String(model || "").trim().toLowerCase();
+  if (!value || value === "auto" || value === "fluid-auto") return DEFAULT_FLUID_LIVE_MODEL;
+  if (value === "nemotron" || value === "nemotron-multilingual") return "nemotron-multilingual-latin-1120ms";
+  if (value === "parakeet" || value === "parakeet-unified") return "parakeet-unified-320ms";
+  if (fluidLiveModelOptions.some(([option]) => option === value)) return value;
+  return DEFAULT_FLUID_LIVE_MODEL;
+}
+
+function activeFluidLiveModelLabel() {
+  return fluidLiveModelOptions.find(([value]) => value === selectedFluidLiveModel())?.[1] || "Auto FluidAudio";
+}
+
 async function saveDesktopRuntimeSettings() {
   try {
     const current = await window.clearScribe?.getSettings?.();
     await window.clearScribe?.saveSettings?.({
       ...(current || {}),
       localSpeechEngine: selectedTranscriptionEngine(),
+      transcriptionEngine: selectedTranscriptionEngine(),
+      localFluidAudioStreamingVariant: selectedFluidLiveModel(),
     });
   } catch {
     // The renderer setting is still persisted locally.
@@ -1548,15 +1591,19 @@ function stopLivePreview(options = {}) {
 
 function shouldUseFluidStreaming() {
   const language = String(selectedWhisperLanguage() || "auto").toLowerCase();
+  const variant = fluidStreamingVariantForLanguage(language);
   return selectedTranscriptionEngine() === "fluid-parakeet" &&
     recordingMode === "wav" &&
     FLUID_STREAM_LANGUAGES.has(language) &&
+    (!variant.startsWith("parakeet") || language === "en") &&
     Boolean(window.clearScribe?.startStreamingTranscription) &&
     Boolean(window.clearScribe?.pushStreamingAudio) &&
     Boolean(window.clearScribe?.finishStreamingTranscription);
 }
 
 function fluidStreamingVariantForLanguage(language = selectedWhisperLanguage()) {
+  const selectedModel = selectedFluidLiveModel();
+  if (selectedModel !== "auto") return selectedModel;
   const normalized = String(language || "").toLowerCase();
   if (normalized === "en") return "parakeet-unified-320ms";
   return "nemotron-multilingual-latin-1120ms";
