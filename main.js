@@ -253,7 +253,7 @@ async function migrateFluidAudioSettings() {
   if (settings.fluidAudioMigrationV1) return settings;
 
   const currentEngine = normalizeSpeechEngine(settings.localSpeechEngine || settings.transcriptionEngine || DEFAULT_SPEECH_ENGINE);
-  if (currentEngine === "mlx-parakeet" || !settings.localSpeechEngine) {
+  if (currentEngine === "mlx-parakeet" || currentEngine === "openai-whisper" || !settings.localSpeechEngine) {
     logEvent("settings:migrate-fluid-audio", { from: currentEngine, to: "fluid-parakeet" });
     return await writeSettings({
       localSpeechEngine: "fluid-parakeet",
@@ -279,7 +279,7 @@ async function getRuntimeStatus() {
     ? "mlx-parakeet"
     : speechEngine === "mlx-whisper"
       ? "mlx-whisper"
-      : (await preferredWhisperEngine()) || "openai-whisper";
+      : (await preferredWhisperEngine()) || "mlx-whisper";
   const localParakeetReady = localFluidAudioReady || Boolean(await resolveMlxParakeetCommand());
   const localWhisperReady = speechEngine === "fluid-parakeet"
     ? localFluidAudioReady
@@ -787,7 +787,7 @@ ipcMain.handle("settings:get", async () => {
       ? "mlx-parakeet"
       : speechEngine === "mlx-whisper"
         ? "mlx-whisper"
-        : (await preferredWhisperEngine()) || "openai-whisper",
+        : (await preferredWhisperEngine()) || "mlx-whisper",
     localWhisperModelPath: settings.localWhisperModelPath || "",
     localWhisperArgs: settings.localWhisperArgs || "",
   };
@@ -1826,8 +1826,8 @@ function normalizeSpeechEngine(engine) {
   const value = String(engine || "").trim().toLowerCase();
   if (value === "fluid" || value === "fluid-audio" || value === "fluidaudio" || value === "fluid-parakeet") return "fluid-parakeet";
   if (value === "mlx" || value === "mlx-whisper") return "mlx-whisper";
-  if (value === "parakeet" || value === "mlx-parakeet" || value === "parakeet-mlx") return "mlx-parakeet";
-  if (value === "openai" || value === "openai-whisper" || value === "whisper") return "openai-whisper";
+  if (value === "parakeet" || value === "mlx-parakeet" || value === "parakeet-mlx") return "fluid-parakeet";
+  if (value === "openai" || value === "openai-whisper" || value === "whisper") return "mlx-whisper";
   if (value === "whisper-cli" || value === "whisper.cpp") return "whisper-cli";
   return DEFAULT_SPEECH_ENGINE;
 }
@@ -1835,8 +1835,7 @@ function normalizeSpeechEngine(engine) {
 function workerEngineForSpeechEngine(engine) {
   const value = normalizeSpeechEngine(engine);
   if (value === "mlx-whisper") return "mlx";
-  if (value === "mlx-parakeet") return "parakeet";
-  return "openai";
+  return "mlx";
 }
 
 async function preferredWhisperEngine() {

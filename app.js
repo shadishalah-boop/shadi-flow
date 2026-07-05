@@ -293,13 +293,7 @@ async function checkRuntime() {
     const engine = selectedTranscriptionEngine();
     const engineLabel = engine === "fluid-parakeet"
       ? "FluidAudio"
-      : engine === "mlx-parakeet"
-        ? "MLX Parakeet"
-        : engine === "mlx-whisper"
-          ? "MLX Whisper"
-          : status.localWhisperEngine === "mlx-whisper"
-            ? "MLX Whisper"
-            : "Local Whisper";
+      : "MLX Whisper";
     const activeModel = engine === "fluid-parakeet"
       ? activeFluidLiveModelLabel()
       : status.localActiveModel || status.localWhisperModel || "large-v3-turbo";
@@ -826,7 +820,7 @@ function settingsSectionHTML(section) {
     return `
       ${settingRow("Shortcuts", "Hold fn and speak. Global shortcut is handled by macOS.", `<button class="secondary-button" type="button">Change</button>`)}
       ${settingRow("Microphone", state.settings.microphone, `<button class="secondary-button" type="button" data-action="start-recording">Test</button>`)}
-      ${settingRow("Speech Engine", "Choose the local runtime family.", `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio local</option><option value="mlx-parakeet" ${selected("mlx-parakeet", state.settings.transcriptionEngine)}>MLX Parakeet TDT 0.6B v3</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper Large V3 Turbo</option><option value="openai-whisper" ${selected("openai-whisper", state.settings.transcriptionEngine)}>OpenAI Whisper CLI</option></select>`)}
+      ${settingRow("Speech Engine", "Choose the local runtime family.", `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio local</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper Large V3 Turbo</option></select>`)}
       ${selectedTranscriptionEngine() === "fluid-parakeet" ? settingRow("FluidAudio Live Model", fluidLiveModelDescription(), renderFluidLiveModelSelect()) : ""}
       ${settingRow("Dictation Language", "Use Auto when switching between languages.", `<select class="select-field" data-setting="dictationLanguage"><option value="auto" ${selected("auto", state.settings.dictationLanguage)}>Auto</option><option value="en" ${selected("en", state.settings.dictationLanguage)}>English</option><option value="es" ${selected("es", state.settings.dictationLanguage)}>Spanish</option><option value="fr" ${selected("fr", state.settings.dictationLanguage)}>French</option><option value="de" ${selected("de", state.settings.dictationLanguage)}>German</option><option value="it" ${selected("it", state.settings.dictationLanguage)}>Italian</option><option value="pt" ${selected("pt", state.settings.dictationLanguage)}>Portuguese</option><option value="ar" ${selected("ar", state.settings.dictationLanguage)}>Arabic</option></select>`)}
       ${settingRow("App Language", "Preferred app UI language.", `<select class="select-field" data-setting="appLanguage"><option>English</option><option>Spanish</option><option>Arabic</option></select>`)}
@@ -1302,9 +1296,9 @@ function selectedFluidLiveModel() {
 function normalizeTranscriptionEngine(engine) {
   const value = String(engine || "").trim().toLowerCase();
   if (value === "fluid" || value === "fluid-audio" || value === "fluidaudio" || value === "fluid-parakeet") return "fluid-parakeet";
-  if (value === "parakeet" || value === "mlx-parakeet" || value === "parakeet-mlx") return "mlx-parakeet";
   if (value === "mlx" || value === "mlx-whisper") return "mlx-whisper";
-  if (value === "openai" || value === "openai-whisper" || value === "whisper") return "openai-whisper";
+  if (value === "openai" || value === "openai-whisper" || value === "whisper") return "mlx-whisper";
+  if (value === "parakeet" || value === "mlx-parakeet" || value === "parakeet-mlx") return "fluid-parakeet";
   return DEFAULT_TRANSCRIPTION_ENGINE;
 }
 
