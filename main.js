@@ -10,7 +10,9 @@ const { promisify } = require("node:util");
 const DEFAULT_LOCAL_WHISPER_COMMAND = "whisper";
 const DEFAULT_LOCAL_WHISPER_MODEL = "large-v3-turbo";
 const DEFAULT_LOCAL_PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3";
-const DEFAULT_SPEECH_ENGINE = "mlx-parakeet";
+const DEFAULT_FLUID_AUDIO_MODEL_VERSION = "v3";
+const DEFAULT_SPEECH_ENGINE = "fluid-parakeet";
+const FLUID_AUDIO_HELPER_NAME = "shadiflow-fluid-helper";
 const GLOBAL_SHORTCUT = "CommandOrControl+Shift+Space";
 const FALLBACK_SHORTCUTS = ["CommandOrControl+Option+Space"];
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
@@ -87,6 +89,12 @@ let whisperWorkerStderr = "";
 let materializedWhisperWorkerPath = "";
 let warmWhisperWorkerPromise = null;
 let warmFallbackWhisperPromise = null;
+let fluidAudioHelper = null;
+let fluidAudioHelperKey = "";
+let fluidAudioHelperRequestId = 0;
+let fluidAudioHelperRequests = new Map();
+let fluidAudioHelperStderr = "";
+let warmFluidAudioHelperPromise = null;
 const resolvedCommandCache = new Map();
 
 function appLogPath() {
@@ -179,19 +187,42 @@ async function writeSettings(nextSettings) {
   return merged;
 }
 
+async function migrateFluidAudioSettings() {
+  const settings = await readSettings();
+  if (settings.fluidAudioMigrationV1) return settings;
+
+  const currentEngine = normalizeSpeechEngine(settings.localSpeechEngine || settings.transcriptionEngine || DEFAULT_SPEECH_ENGINE);
+  if (currentEngine === "mlx-parakeet" || !settings.localSpeechEngine) {
+    logEvent("settings:migrate-fluid-audio", { from: currentEngine, to: "fluid-parakeet" });
+    return await writeSettings({
+      localSpeechEngine: "fluid-parakeet",
+      transcriptionEngine: "fluid-parakeet",
+      fluidAudioMigrationV1: true,
+      localFluidAudioModelVersion: settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION,
+    });
+  }
+
+  return await writeSettings({ fluidAudioMigrationV1: true });
+}
+
 async function getRuntimeStatus() {
   const settings = await readSettings();
   const localWhisperCommand = settings.localWhisperCommand || DEFAULT_LOCAL_WHISPER_COMMAND;
   const speechEngine = normalizeSpeechEngine(settings.localSpeechEngine || settings.transcriptionEngine || DEFAULT_SPEECH_ENGINE);
   const localWhisperModel = settings.localWhisperModel || DEFAULT_LOCAL_WHISPER_MODEL;
   const localParakeetModel = settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL;
-  const localWhisperEngine = speechEngine === "mlx-parakeet"
+  const localFluidAudioReady = Boolean(await resolveFluidAudioHelperPath());
+  const localWhisperEngine = speechEngine === "fluid-parakeet"
+    ? "fluid-parakeet"
+    : speechEngine === "mlx-parakeet"
     ? "mlx-parakeet"
     : speechEngine === "mlx-whisper"
       ? "mlx-whisper"
       : (await preferredWhisperEngine()) || "openai-whisper";
-  const localParakeetReady = Boolean(await resolveMlxParakeetCommand());
-  const localWhisperReady = speechEngine === "mlx-parakeet"
+  const localParakeetReady = localFluidAudioReady || Boolean(await resolveMlxParakeetCommand());
+  const localWhisperReady = speechEngine === "fluid-parakeet"
+    ? localFluidAudioReady
+    : speechEngine === "mlx-parakeet"
     ? localParakeetReady
     : speechEngine === "mlx-whisper"
       ? Boolean(await resolveMlxWhisperCommand())
@@ -203,11 +234,19 @@ async function getRuntimeStatus() {
     localWhisperCommand,
     localWhisperModel,
     localParakeetModel,
-    localActiveModel: speechEngine === "mlx-parakeet" ? localParakeetModel : localWhisperModel,
+    localActiveModel: speechEngine === "fluid-parakeet"
+      ? "FluidAudio Parakeet TDT v3"
+      : speechEngine === "mlx-parakeet"
+        ? localParakeetModel
+        : localWhisperModel,
     localWhisperReady,
     localParakeetReady,
+    localFluidAudioReady,
     localWhisperEngine,
-    localWhisperWarm: Boolean(whisperWorker && !whisperWorker.killed && whisperWorker.exitCode === null),
+    localWhisperWarm: Boolean(
+      (whisperWorker && !whisperWorker.killed && whisperWorker.exitCode === null) ||
+      (fluidAudioHelper && !fluidAudioHelper.killed && fluidAudioHelper.exitCode === null)
+    ),
     shortcut: activeShortcut,
     primaryShortcut: GLOBAL_SHORTCUT,
     shortcutRegistered,
@@ -673,7 +712,10 @@ ipcMain.handle("settings:get", async () => {
     localWhisperCommand: settings.localWhisperCommand || DEFAULT_LOCAL_WHISPER_COMMAND,
     localWhisperModel: settings.localWhisperModel || DEFAULT_LOCAL_WHISPER_MODEL,
     localParakeetModel: settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL,
-    localWhisperEngine: speechEngine === "mlx-parakeet"
+    localFluidAudioModelVersion: settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION,
+    localWhisperEngine: speechEngine === "fluid-parakeet"
+      ? "fluid-parakeet"
+      : speechEngine === "mlx-parakeet"
       ? "mlx-parakeet"
       : speechEngine === "mlx-whisper"
         ? "mlx-whisper"
@@ -689,6 +731,7 @@ ipcMain.handle("settings:save", async (_event, settings) => {
     localWhisperCommand: String(settings.localWhisperCommand || DEFAULT_LOCAL_WHISPER_COMMAND).trim(),
     localWhisperModel: String(settings.localWhisperModel || DEFAULT_LOCAL_WHISPER_MODEL).trim(),
     localParakeetModel: String(settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL).trim(),
+    localFluidAudioModelVersion: String(settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION).trim(),
     localWhisperModelPath: String(settings.localWhisperModelPath || "").trim(),
     localWhisperArgs: String(settings.localWhisperArgs || "").trim(),
   });
@@ -806,15 +849,24 @@ async function transcribeWithLocalWhisper(payload, settings, options = {}) {
     payload.engine || settings.localSpeechEngine || settings.transcriptionEngine || DEFAULT_SPEECH_ENGINE,
   );
   let speechEngine = requestedSpeechEngine;
-  if (speechEngine === "mlx-parakeet" && !parakeetSupportsLanguage(payload.language || "")) {
+  if ((speechEngine === "fluid-parakeet" || speechEngine === "mlx-parakeet") && !parakeetSupportsLanguage(payload.language || "")) {
     logEvent("audio:parakeet-language-fallback", {
+      engine: speechEngine,
       language: payload.language || "auto",
       fallbackEngine: "mlx-whisper",
     });
     speechEngine = "mlx-whisper";
   }
   let command = "";
-  if (speechEngine === "mlx-whisper") {
+  let fluidAudioHelperPath = "";
+  if (speechEngine === "fluid-parakeet") {
+    fluidAudioHelperPath = await resolveFluidAudioHelperPath();
+    if (!fluidAudioHelperPath) {
+      throw new Error(
+        "FluidAudio helper is not available. Run npm run build:fluid and package the app again.",
+      );
+    }
+  } else if (speechEngine === "mlx-whisper") {
     command = await resolveMlxWhisperCommand();
     if (!command) {
       throw new Error(
@@ -833,7 +885,7 @@ async function transcribeWithLocalWhisper(payload, settings, options = {}) {
       settings.localWhisperCommand || DEFAULT_LOCAL_WHISPER_COMMAND,
     );
   }
-  if (!command) {
+  if (speechEngine !== "fluid-parakeet" && !command) {
     throw new Error(
       `Local Whisper command not found: ${settings.localWhisperCommand || DEFAULT_LOCAL_WHISPER_COMMAND}`,
     );
@@ -917,20 +969,25 @@ async function transcribeWithLocalWhisper(payload, settings, options = {}) {
   try {
     const whisperOptions = {
       command,
+      fluidAudioHelperPath,
       engine: speechEngine,
       audioPath,
       outputDir: tempDir,
       outputBase: outBase,
       language: payload.language || "",
-      model: speechEngine === "mlx-parakeet"
+      model: speechEngine === "fluid-parakeet"
+        ? settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION
+        : speechEngine === "mlx-parakeet"
         ? settings.localParakeetModel || DEFAULT_LOCAL_PARAKEET_MODEL
         : settings.localWhisperModel || DEFAULT_LOCAL_WHISPER_MODEL,
       modelPath: settings.localWhisperModelPath || "",
       template: settings.localWhisperArgs || "",
     };
-    let result = await runWhisperTranscription(whisperOptions, tempDir);
+    let result = speechEngine === "fluid-parakeet"
+      ? await runFluidAudioTranscription(whisperOptions)
+      : await runWhisperTranscription(whisperOptions, tempDir);
 
-    if (!isPreview && speechEngine !== "mlx-parakeet" && whisperOptions.language && shouldRetryWithAutoLanguage(result.text, audioDurationMs)) {
+    if (!isPreview && speechEngine !== "mlx-parakeet" && speechEngine !== "fluid-parakeet" && whisperOptions.language && shouldRetryWithAutoLanguage(result.text, audioDurationMs)) {
       logEvent("audio:retry-auto-language", {
         engine: speechEngine,
         model: result.model || whisperOptions.model,
@@ -945,10 +1002,11 @@ async function transcribeWithLocalWhisper(payload, settings, options = {}) {
       };
     }
 
-    if (!isPreview && speechEngine === "mlx-parakeet" && !hasMeaningfulTranscript(result.text)) {
+    if (!isPreview && (speechEngine === "mlx-parakeet" || speechEngine === "fluid-parakeet") && !hasMeaningfulTranscript(result.text)) {
       const fallbackCommand = await resolveMlxWhisperCommand();
       if (fallbackCommand) {
         logEvent("audio:parakeet-empty-fallback", {
+          engine: speechEngine,
           model: result.model || whisperOptions.model,
           audioDurationMs,
           textLength: result.text.length,
@@ -1027,6 +1085,35 @@ async function runWhisperTranscription(options, tempDir) {
     model: resolvedModel,
     engine: options.engine,
     workerDurationMs,
+  };
+}
+
+async function runFluidAudioTranscription(options) {
+  const result = await callFluidAudioHelper(options.fluidAudioHelperPath, {
+    op: "transcribe",
+    audioPath: options.audioPath,
+    language: options.language || "",
+    modelVersion: fluidAudioModelVersion(options.model),
+  });
+  const text = String(result.text || "").trim();
+  const workerDurationMs = Number(result.workerDurationMs || 0);
+  const resolvedModel = result.model || `FluidAudio Parakeet TDT ${fluidAudioModelVersion(options.model)}`;
+  logEvent("audio:fluid-result", {
+    engine: "fluid-parakeet",
+    model: resolvedModel,
+    language: options.language || "auto",
+    textLength: text.length,
+    textPreview: transcriptPreview(text),
+    meaningful: hasMeaningfulTranscript(text),
+    workerDurationMs,
+    confidence: result.confidence ?? null,
+  });
+  return {
+    text,
+    model: resolvedModel,
+    engine: "fluid-parakeet",
+    workerDurationMs,
+    audioDurationMs: Number(result.audioDurationMs || 0),
   };
 }
 
@@ -1123,12 +1210,45 @@ function canUseWarmWhisperWorker(options) {
   return !(commandName.includes("whisper-cli") || commandName === "main");
 }
 
+async function warmFluidAudioHelperInBackground() {
+  if (warmFluidAudioHelperPromise) return warmFluidAudioHelperPromise;
+  warmFluidAudioHelperPromise = (async () => {
+    const settings = await readSettings();
+    const helperPath = await resolveFluidAudioHelperPath();
+    if (!helperPath) return;
+
+    const modelVersion = fluidAudioModelVersion(settings.localFluidAudioModelVersion || DEFAULT_FLUID_AUDIO_MODEL_VERSION);
+    const started = Date.now();
+    logEvent("audio:fluid-warm-start", { modelVersion });
+    const result = await callFluidAudioHelper(helperPath, {
+      op: "warm",
+      modelVersion,
+    });
+    logEvent("audio:fluid-warm-result", {
+      engine: result.engine || "fluid-parakeet",
+      model: result.model || `FluidAudio Parakeet TDT ${modelVersion}`,
+      durationMs: Date.now() - started,
+      workerDurationMs: Number(result.workerDurationMs || 0),
+    });
+  })().catch((error) => {
+    logEvent("audio:fluid-warm-failed", errorDetails(error));
+    stopFluidAudioHelper();
+  }).finally(() => {
+    warmFluidAudioHelperPromise = null;
+  });
+  return warmFluidAudioHelperPromise;
+}
+
 async function warmWhisperWorkerInBackground() {
   if (warmWhisperWorkerPromise) return warmWhisperWorkerPromise;
   warmWhisperWorkerPromise = (async () => {
     const started = Date.now();
     const settings = await readSettings();
     const speechEngine = normalizeSpeechEngine(settings.localSpeechEngine || settings.transcriptionEngine || DEFAULT_SPEECH_ENGINE);
+    if (speechEngine === "fluid-parakeet") {
+      await warmFluidAudioHelperInBackground();
+      return;
+    }
     const command = speechEngine === "mlx-parakeet"
       ? await resolveMlxParakeetCommand()
       : speechEngine === "mlx-whisper"
@@ -1184,7 +1304,7 @@ async function warmFallbackWhisperInBackground() {
   warmFallbackWhisperPromise = (async () => {
     const settings = await readSettings();
     const speechEngine = normalizeSpeechEngine(settings.localSpeechEngine || settings.transcriptionEngine || DEFAULT_SPEECH_ENGINE);
-    if (speechEngine !== "mlx-parakeet") return;
+    if (speechEngine !== "mlx-parakeet" && speechEngine !== "fluid-parakeet") return;
 
     const command = await resolveMlxWhisperCommand();
     if (!command) return;
@@ -1358,6 +1478,129 @@ function stopWhisperWorker() {
   if (!child.killed && child.exitCode === null) child.kill();
 }
 
+async function callFluidAudioHelper(helperPath, request) {
+  const helper = await ensureFluidAudioHelper(helperPath);
+  if (!helper.stdin.writable) throw new Error("FluidAudio helper is not writable.");
+
+  const id = String(++fluidAudioHelperRequestId);
+  const payload = { ...request, id };
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      fluidAudioHelperRequests.delete(id);
+      reject(new Error("FluidAudio helper timed out."));
+      stopFluidAudioHelper();
+    }, 5 * 60 * 1000);
+
+    fluidAudioHelperRequests.set(id, { resolve, reject, timeout });
+    helper.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+      if (!error) return;
+      rejectFluidAudioHelperRequest(id, error);
+    });
+  });
+}
+
+async function ensureFluidAudioHelper(helperPath) {
+  if (!helperPath) throw new Error("FluidAudio helper path is missing.");
+  const key = helperPath;
+  if (
+    fluidAudioHelper &&
+    !fluidAudioHelper.killed &&
+    fluidAudioHelper.exitCode === null &&
+    fluidAudioHelperKey === key
+  ) {
+    return fluidAudioHelper;
+  }
+
+  stopFluidAudioHelper();
+  fluidAudioHelperStderr = "";
+  fluidAudioHelperKey = key;
+  const child = spawn(helperPath, [], {
+    env: pathSearchEnv(),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  fluidAudioHelper = child;
+
+  child.stdout.setEncoding("utf8");
+  const lines = readline.createInterface({ input: child.stdout });
+  lines.on("line", handleFluidAudioHelperLine);
+
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    fluidAudioHelperStderr = `${fluidAudioHelperStderr}${chunk}`.slice(-12000);
+  });
+
+  child.on("error", (error) => {
+    rejectAllFluidAudioHelperRequests(error);
+    if (fluidAudioHelper === child) fluidAudioHelper = null;
+  });
+
+  child.on("exit", (code, signal) => {
+    const detail = summarizeToolOutput(fluidAudioHelperStderr);
+    const reason = signal || `code ${code}`;
+    rejectAllFluidAudioHelperRequests(
+      new Error(
+        detail
+          ? `FluidAudio helper stopped (${reason}). ${detail}`
+          : `FluidAudio helper stopped (${reason}).`,
+      ),
+    );
+    if (fluidAudioHelper === child) fluidAudioHelper = null;
+    fluidAudioHelperKey = "";
+  });
+
+  return child;
+}
+
+function handleFluidAudioHelperLine(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed) return;
+
+  let message = null;
+  try {
+    message = JSON.parse(trimmed);
+  } catch {
+    fluidAudioHelperStderr = `${fluidAudioHelperStderr}\n${trimmed}`.slice(-12000);
+    return;
+  }
+
+  const pending = fluidAudioHelperRequests.get(String(message.id));
+  if (!pending) return;
+  fluidAudioHelperRequests.delete(String(message.id));
+  clearTimeout(pending.timeout);
+
+  if (message.ok) {
+    pending.resolve(message);
+    return;
+  }
+
+  pending.reject(new Error(String(message.error || "FluidAudio helper failed.").slice(0, 1600)));
+}
+
+function rejectFluidAudioHelperRequest(id, error) {
+  const pending = fluidAudioHelperRequests.get(String(id));
+  if (!pending) return;
+  fluidAudioHelperRequests.delete(String(id));
+  clearTimeout(pending.timeout);
+  pending.reject(error);
+}
+
+function rejectAllFluidAudioHelperRequests(error) {
+  for (const [id, pending] of fluidAudioHelperRequests) {
+    fluidAudioHelperRequests.delete(id);
+    clearTimeout(pending.timeout);
+    pending.reject(error);
+  }
+}
+
+function stopFluidAudioHelper() {
+  if (!fluidAudioHelper) return;
+  const child = fluidAudioHelper;
+  fluidAudioHelper = null;
+  fluidAudioHelperKey = "";
+  rejectAllFluidAudioHelperRequests(new Error("FluidAudio helper was stopped."));
+  if (!child.killed && child.exitCode === null) child.kill();
+}
+
 async function materializeWhisperWorkerScript() {
   if (materializedWhisperWorkerPath) return materializedWhisperWorkerPath;
   const sourcePath = path.join(__dirname, "whisper_worker.py");
@@ -1410,11 +1653,12 @@ async function resolveWhisperPython(command) {
 
 function normalizeSpeechEngine(engine) {
   const value = String(engine || "").trim().toLowerCase();
+  if (value === "fluid" || value === "fluid-audio" || value === "fluidaudio" || value === "fluid-parakeet") return "fluid-parakeet";
   if (value === "mlx" || value === "mlx-whisper") return "mlx-whisper";
   if (value === "parakeet" || value === "mlx-parakeet" || value === "parakeet-mlx") return "mlx-parakeet";
   if (value === "openai" || value === "openai-whisper" || value === "whisper") return "openai-whisper";
   if (value === "whisper-cli" || value === "whisper.cpp") return "whisper-cli";
-  return "mlx-whisper";
+  return DEFAULT_SPEECH_ENGINE;
 }
 
 function workerEngineForSpeechEngine(engine) {
@@ -1450,6 +1694,31 @@ async function resolveMlxParakeetCommand() {
   );
   if (await fileExists(runtimeCommand)) return runtimeCommand;
   return await resolveCommand("parakeet-mlx");
+}
+
+async function resolveFluidAudioHelperPath() {
+  const candidates = [];
+  if (app.isPackaged) {
+    candidates.push(
+      path.join(process.resourcesPath, "app.asar.unpacked", "native/bin", FLUID_AUDIO_HELPER_NAME),
+      path.join(process.resourcesPath, "native/bin", FLUID_AUDIO_HELPER_NAME),
+    );
+  }
+  candidates.push(
+    path.join(__dirname, "native/bin", FLUID_AUDIO_HELPER_NAME),
+    path.join(__dirname, "native/fluid-helper/.build/release", FLUID_AUDIO_HELPER_NAME),
+  );
+
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) return candidate;
+  }
+  return "";
+}
+
+function fluidAudioModelVersion(model = "") {
+  const value = String(model || "").trim().toLowerCase();
+  if (value === "v2" || value.includes("0.6b-v2")) return "v2";
+  return "v3";
 }
 
 function parakeetSupportsLanguage(language) {
@@ -1920,8 +2189,13 @@ function splitArgs(input) {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!singleInstanceLock) return;
+  try {
+    await migrateFluidAudioSettings();
+  } catch (error) {
+    logEvent("settings:migrate-fluid-audio-failed", errorDetails(error));
+  }
   createWindow();
   registerShortcut();
   startPasteTargetPolling();
@@ -1960,5 +2234,6 @@ app.on("will-quit", () => {
   clearInterval(targetPollTimer);
   if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.close();
   stopWhisperWorker();
+  stopFluidAudioHelper();
   globalShortcut.unregisterAll();
 });

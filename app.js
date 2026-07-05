@@ -1,6 +1,6 @@
 const storageKey = "shadiFlowStateV1";
 const legacyStorageKeys = ["clearScribeFlowStateV2"];
-const DEFAULT_TRANSCRIPTION_ENGINE = "mlx-parakeet";
+const DEFAULT_TRANSCRIPTION_ENGINE = "fluid-parakeet";
 const LIVE_PREVIEW_INTERVAL_MS = 900;
 const LIVE_PREVIEW_MIN_MS = 900;
 const LIVE_PREVIEW_MAX_MS = 8000;
@@ -273,13 +273,15 @@ async function checkRuntime() {
       persist();
     }
     const engine = selectedTranscriptionEngine();
-    const engineLabel = engine === "mlx-parakeet"
-      ? "MLX Parakeet"
-      : engine === "mlx-whisper"
-        ? "MLX Whisper"
-        : status.localWhisperEngine === "mlx-whisper"
+    const engineLabel = engine === "fluid-parakeet"
+      ? "FluidAudio Parakeet"
+      : engine === "mlx-parakeet"
+        ? "MLX Parakeet"
+        : engine === "mlx-whisper"
           ? "MLX Whisper"
-          : "Local Whisper";
+          : status.localWhisperEngine === "mlx-whisper"
+            ? "MLX Whisper"
+            : "Local Whisper";
     els.engineState.textContent = status.localWhisperReady
       ? `${engineLabel} / ${status.localActiveModel || status.localWhisperModel || "large-v3-turbo"}`
       : `${engineLabel} missing`;
@@ -803,7 +805,7 @@ function settingsSectionHTML(section) {
     return `
       ${settingRow("Shortcuts", "Hold fn and speak. Global shortcut is handled by macOS.", `<button class="secondary-button" type="button">Change</button>`)}
       ${settingRow("Microphone", state.settings.microphone, `<button class="secondary-button" type="button" data-action="start-recording">Test</button>`)}
-      ${settingRow("Speech Engine", "Use Parakeet for fast English/Spanish dictation; Whisper stays available as fallback.", `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="mlx-parakeet" ${selected("mlx-parakeet", state.settings.transcriptionEngine)}>MLX Parakeet TDT 0.6B v3</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper Large V3 Turbo</option><option value="openai-whisper" ${selected("openai-whisper", state.settings.transcriptionEngine)}>OpenAI Whisper CLI</option></select>`)}
+      ${settingRow("Speech Engine", "Use FluidAudio for native Apple Neural Engine dictation; MLX stays available as fallback.", `<select class="select-field wide-select" data-setting="transcriptionEngine"><option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio Parakeet TDT 0.6B v3</option><option value="mlx-parakeet" ${selected("mlx-parakeet", state.settings.transcriptionEngine)}>MLX Parakeet TDT 0.6B v3</option><option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper Large V3 Turbo</option><option value="openai-whisper" ${selected("openai-whisper", state.settings.transcriptionEngine)}>OpenAI Whisper CLI</option></select>`)}
       ${settingRow("Dictation Language", "Use Auto when switching between languages.", `<select class="select-field" data-setting="dictationLanguage"><option value="auto" ${selected("auto", state.settings.dictationLanguage)}>Auto</option><option value="en" ${selected("en", state.settings.dictationLanguage)}>English</option><option value="es" ${selected("es", state.settings.dictationLanguage)}>Spanish</option><option value="fr" ${selected("fr", state.settings.dictationLanguage)}>French</option><option value="de" ${selected("de", state.settings.dictationLanguage)}>German</option><option value="it" ${selected("it", state.settings.dictationLanguage)}>Italian</option><option value="pt" ${selected("pt", state.settings.dictationLanguage)}>Portuguese</option><option value="ar" ${selected("ar", state.settings.dictationLanguage)}>Arabic</option></select>`)}
       ${settingRow("App Language", "Preferred app UI language.", `<select class="select-field" data-setting="appLanguage"><option>English</option><option>Spanish</option><option>Arabic</option></select>`)}
     `;
@@ -1218,7 +1220,9 @@ function selectedTranscriptionEngine() {
 
 function normalizeTranscriptionEngine(engine) {
   const value = String(engine || "").trim().toLowerCase();
+  if (value === "fluid" || value === "fluid-audio" || value === "fluidaudio" || value === "fluid-parakeet") return "fluid-parakeet";
   if (value === "parakeet" || value === "mlx-parakeet" || value === "parakeet-mlx") return "mlx-parakeet";
+  if (value === "mlx" || value === "mlx-whisper") return "mlx-whisper";
   if (value === "openai" || value === "openai-whisper" || value === "whisper") return "openai-whisper";
   return DEFAULT_TRANSCRIPTION_ENGINE;
 }

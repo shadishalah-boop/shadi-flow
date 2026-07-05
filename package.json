@@ -1,6 +1,6 @@
 {
   "name": "shadi-flow",
-  "version": "0.9.23",
+  "version": "0.10.0",
   "description": "Desktop voice dictation and flow-writing app.",
   "main": "main.js",
   "private": true,
@@ -10,12 +10,17 @@
   },
   "scripts": {
     "start": "electron .",
-    "package": "electron-builder --mac dir",
-    "dist": "electron-builder --mac dmg"
+    "build:fluid": "test -x native/bin/shadiflow-fluid-helper || npm run build:fluid:force",
+    "build:fluid:force": "mkdir -p native/fluid-helper/.build/clang-module-cache && (CLANG_MODULE_CACHE_PATH=\"$PWD/native/fluid-helper/.build/clang-module-cache\" swift build -c release --package-path native/fluid-helper || test -x native/fluid-helper/.build/release/shadiflow-fluid-helper) && mkdir -p native/bin && cp native/fluid-helper/.build/release/shadiflow-fluid-helper native/bin/shadiflow-fluid-helper",
+    "package": "npm run build:fluid && electron-builder --mac dir",
+    "dist": "npm run build:fluid && electron-builder --mac dmg"
   },
   "build": {
     "appId": "app.shadiflow.desktop",
     "productName": "ShadiFlow",
+    "asarUnpack": [
+      "native/bin/**/*"
+    ],
     "files": [
       "index.html",
       "styles.css",
@@ -26,6 +31,7 @@
       "main.js",
       "whisper_worker.py",
       "preload.js",
+      "native/bin/**/*",
       "ds/**/*",
       "assets/**/*",
       "package.json"

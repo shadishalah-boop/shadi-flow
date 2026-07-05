@@ -15,6 +15,10 @@ __pycache__/
 *.pyc
 runtime-cache/
 runtimes/
+native/bin/
+native/fluid-helper/.build/
+native/fluid-helper/native/
+native/*.aiff
 *.log
 
 # Local environment/config

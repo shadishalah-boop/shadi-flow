@@ -12,6 +12,12 @@ Install dependencies once:
 npm install
 ```
 
+Build the native FluidAudio helper:
+
+```bash
+npm run build:fluid
+```
+
 Run in development:
 
 ```bash
@@ -32,16 +38,26 @@ dist/mac-arm64/ShadiFlow.app
 
 ## Local open-source mode
 
-ShadiFlow runs fully locally. This build defaults to MLX Parakeet TDT 0.6B v3
-for fast Apple Silicon transcription, with MLX Whisper Large V3 Turbo available
-as the fallback path for unsupported languages.
+ShadiFlow runs fully locally. This build defaults to FluidAudio Parakeet TDT
+0.6B v3 through a small native Swift helper, with MLX Whisper Large V3 Turbo
+available as the fallback path for unsupported languages.
 
 ```text
-Default transcription provider: MLX Parakeet TDT 0.6B v3
+Default transcription provider: FluidAudio Parakeet TDT 0.6B v3
 Fallback transcription provider: MLX Whisper Large V3 Turbo
 Language: selectable in Settings
 Formatting: built-in local rules
 ```
+
+FluidAudio runtime:
+
+```text
+native/fluid-helper
+native/bin/shadiflow-fluid-helper
+```
+
+The first FluidAudio run downloads and compiles Core ML model bundles. Later
+runs keep a helper process warm for fast background dictation.
 
 MLX runtime used by the packaged app:
 
