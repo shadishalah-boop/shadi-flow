@@ -49,6 +49,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 const navItems = [
   ["home", "Dictation"],
+  ["style", "Style"],
   ["dictionary", "Vocabulary"],
   ["snippets", "Snippets"],
 ];
@@ -100,6 +101,22 @@ const styleGroups = {
       ["strict", "Strict cleanup", "Rewrite awkward phrases", "I reviewed the draft and shared concise notes."],
     ],
   },
+};
+
+const defaultSelectedStyles = {
+  personal: "casual",
+  work: "casual",
+  email: "polished",
+  other: "clean",
+  cleanup: "smart",
+};
+
+const styleSamples = {
+  personal: "hey are you free for lunch tomorrow? lets do 12 if that works for you",
+  work: "hey jordan i can review this by 3 and send notes after",
+  email: "hi nora. friday at 3 pm works for me. best shadi",
+  other: "please summarize the notes include open questions and suggest next steps",
+  cleanup: "um i basically checked the draft and like sent the notes",
 };
 
 const settingsSections = [
@@ -195,13 +212,14 @@ function loadState() {
 
 function normalizeState(saved) {
   const page = navItems.some(([id]) => id === saved.page) ? saved.page : "home";
+  const styleTab = styleGroups[saved.styleTab] ? saved.styleTab : "personal";
   return {
     page,
     insightsTab: saved.insightsTab || "usage",
     dictionaryTab: saved.dictionaryTab || "all",
     snippetsTab: saved.snippetsTab || "all",
-    styleTab: saved.styleTab || "personal",
-    selectedStyles: saved.selectedStyles || { personal: "casual", work: "casual", email: "polished", other: "clean", cleanup: "smart" },
+    styleTab,
+    selectedStyles: { ...defaultSelectedStyles, ...(saved.selectedStyles || {}) },
     transformsOptIn: saved.transformsOptIn ?? true,
     scratchpadInFlowBar: saved.scratchpadInFlowBar ?? false,
     dictionary: Array.isArray(saved.dictionary) ? saved.dictionary : defaultWords,
@@ -317,7 +335,8 @@ function renderNav() {
 function render(options = {}) {
   renderNav();
   const titles = {
-    home: ["Dictation", "Ready to speak"],
+    home: ["Dictation", "Ready"],
+    style: ["Style", "Output formatting"],
     dictionary: ["Vocabulary", "Names and terms"],
     snippets: ["Snippets", "Reusable text"],
   };
@@ -329,6 +348,7 @@ function render(options = {}) {
 }
 
 function renderPage(page) {
+  if (page === "style") return renderStyle();
   if (page === "dictionary") return renderDictionary();
   if (page === "snippets") return renderSnippets();
   return renderHome();
@@ -347,19 +367,23 @@ function renderHome() {
     .join("");
 
   return `
-    <section class="command-panel">
-      <div>
-        <span class="engine-pill">${escapeHTML(dictationLanguageLabel())}</span>
-        <h2>Dictate, then paste exactly where you started.</h2>
+    <section class="dictation-console">
+      <div class="console-copy">
+        <div class="status-pills">
+          <span class="engine-pill">${escapeHTML(dictationLanguageLabel())}</span>
+          <span class="engine-pill">${escapeHTML(activeStyleSummary())}</span>
+        </div>
+        <h2>Speak once. Paste back to the app you started from.</h2>
         <p class="muted">${escapeHTML(finalEngineDescription())}</p>
       </div>
-      <div class="command-actions">
+      <div class="console-actions">
         <button class="primary-button" type="button" data-action="start-recording">Start dictation</button>
+        <button class="secondary-button" type="button" data-page="style">Style</button>
         <button class="secondary-button" type="button" data-action="open-settings">Settings</button>
       </div>
     </section>
 
-    <div class="quick-controls">
+    <div class="control-strip">
       <label>
         <span>Language</span>
         ${renderDictationLanguageSelect("select-field wide-select")}
@@ -370,6 +394,10 @@ function renderHome() {
           <option value="fluid-parakeet" ${selected("fluid-parakeet", state.settings.transcriptionEngine)}>FluidAudio + MLX fallback</option>
           <option value="mlx-whisper" ${selected("mlx-whisper", state.settings.transcriptionEngine)}>MLX Whisper only</option>
         </select>
+      </label>
+      <label>
+        <span>Active style</span>
+        <button class="select-link" type="button" data-page="style">${escapeHTML(activeStyleSummary())}</button>
       </label>
     </div>
 
@@ -541,30 +569,186 @@ function renderSnippetRow(snippet) {
 }
 
 function renderStyle() {
-  const group = styleGroups[state.styleTab];
+  const groupId = activeStyleGroupId();
+  const group = styleGroups[groupId];
+  const selectedStyle = activeStyleId(groupId);
+  const selectedCard = activeStyleCard(groupId, selectedStyle);
+  const [, selectedName, selectedHelper] = selectedCard;
+  const preview = stylePreviewFor(groupId, selectedStyle);
   return `
-    ${renderTabs(Object.entries(styleGroups).map(([id, value]) => [id, value.label]), state.styleTab, "style-tab")}
-    <div class="banner">
-      <h2>This style applies in ${group.label.toLowerCase()}</h2>
-      <p>Formatting applies after transcription. Background dictation stays plain unless you run a transform.</p>
-      <p class="muted">${escapeHTML(group.apps)}</p>
-    </div>
-    <div class="grid-4" style="margin-top:18px">
-      ${group.cards.map(renderStyleCard).join("")}
-    </div>
+    <section class="style-dashboard">
+      <div class="style-hero">
+        <div>
+          <span class="engine-pill">Active for every dictation</span>
+          <h2>${escapeHTML(selectedName)}</h2>
+          <p class="muted">${escapeHTML(selectedHelper)}. Style is applied locally after transcription and before copy, paste, and history.</p>
+        </div>
+        <div class="style-live-preview">
+          <span>Preview</span>
+          <p>${escapeHTML(preview)}</p>
+        </div>
+      </div>
+
+      ${renderTabs(Object.entries(styleGroups).map(([id, value]) => [id, value.label]), groupId, "style-tab")}
+
+      <div class="style-context">
+        <div>
+          <h3>${escapeHTML(group.label)}</h3>
+          <p class="muted">${escapeHTML(group.apps)}</p>
+        </div>
+        <button class="secondary-button" type="button" data-page="home">Back to dictation</button>
+      </div>
+
+      <div class="style-grid">
+        ${group.cards.map((card) => renderStyleCard(card, groupId)).join("")}
+      </div>
+    </section>
   `;
 }
 
-function renderStyleCard(card) {
-  const [id, name, helper, preview] = card;
-  const active = state.selectedStyles[state.styleTab] === id;
+function renderStyleCard(card, groupId) {
+  const [id, name, helper] = card;
+  const active = activeStyleId(groupId) === id;
+  const preview = stylePreviewFor(groupId, id);
   return `
     <button class="style-card ${active ? "is-active" : ""}" type="button" data-action="select-style" data-style="${id}">
-      <div><h2>${escapeHTML(name)}</h2><p class="muted">${escapeHTML(helper)}</p></div>
+      <div class="style-card-header">
+        <span class="style-mark" aria-hidden="true"></span>
+        <div>
+          <h3>${escapeHTML(name)}</h3>
+          <p class="muted">${escapeHTML(helper)}</p>
+        </div>
+      </div>
       <div class="message-preview">${escapeHTML(preview).replace(/\n/g, "<br>")}</div>
-      <span class="avatar">J</span>
+      <span class="style-card-status">${active ? "Active" : "Use this style"}</span>
     </button>
   `;
+}
+
+function stylePreviewFor(groupId, styleId) {
+  return applyDictationStyle(styleSamples[groupId] || styleSamples.personal, groupId, styleId);
+}
+
+function activeStyleGroupId() {
+  return styleGroups[state.styleTab] ? state.styleTab : "personal";
+}
+
+function activeStyleId(groupId = activeStyleGroupId()) {
+  const fallback = defaultSelectedStyles[groupId] || styleGroups[groupId]?.cards?.[0]?.[0] || "clean";
+  const selectedStyle = state.selectedStyles?.[groupId] || fallback;
+  return styleGroups[groupId]?.cards?.some(([id]) => id === selectedStyle) ? selectedStyle : fallback;
+}
+
+function activeStyleCard(groupId = activeStyleGroupId(), styleId = activeStyleId(groupId)) {
+  return styleGroups[groupId]?.cards?.find(([id]) => id === styleId) || styleGroups.personal.cards[0];
+}
+
+function activeStyleSummary() {
+  const groupId = activeStyleGroupId();
+  const group = styleGroups[groupId];
+  const [, name] = activeStyleCard(groupId);
+  return `${group.label}: ${name.replace(/\.$/, "")}`;
+}
+
+function applySelectedDictationStyle(text) {
+  const groupId = activeStyleGroupId();
+  return applyDictationStyle(text, groupId, activeStyleId(groupId));
+}
+
+function applyDictationStyle(input, groupId, styleId) {
+  const text = normalizeSpacing(input || "");
+  if (!text) return "";
+  if (groupId === "personal") return applyPersonalStyle(text, styleId);
+  if (groupId === "work") return applyWorkStyle(text, styleId);
+  if (groupId === "email") return applyEmailStyle(text, styleId);
+  if (groupId === "other") return applyOtherStyle(text, styleId);
+  if (groupId === "cleanup") return applyCleanupStyle(text, styleId);
+  return sentenceCase(text);
+}
+
+function applyPersonalStyle(text, styleId) {
+  if (styleId === "formal") return ensureTerminalPunctuation(sentenceCase(text));
+  if (styleId === "very-casual") return withProtectedTerms(text, (value) => removeTerminalPunctuation(value).toLowerCase().replace(/\blet's\b/g, "lets"));
+  if (styleId === "excited") return ensureTerminalPunctuation(sentenceCase(text), "!");
+  return removeTerminalPunctuation(sentenceCase(text));
+}
+
+function applyWorkStyle(text, styleId) {
+  const clean = sentenceCase(removeFillers(text));
+  if (styleId === "formal") return ensureTerminalPunctuation(clean);
+  if (styleId === "concise") return ensureTerminalPunctuation(toConciseText(clean));
+  return removeTerminalPunctuation(clean);
+}
+
+function applyEmailStyle(text, styleId) {
+  const clean = ensureTerminalPunctuation(sentenceCase(text));
+  const lines = clean.split(/\s+(?=(?:Best|Thanks|Regards|Shadi)\b)/i);
+  if (styleId === "brief") return toConciseText(clean);
+  if (styleId === "warm" && !/^thanks\b/i.test(clean)) return `Thanks for reaching out.\n\n${clean}`;
+  if (lines.length > 1) return lines.join("\n\n");
+  return clean;
+}
+
+function applyOtherStyle(text, styleId) {
+  const clean = ensureTerminalPunctuation(sentenceCase(text));
+  if (styleId === "structured") {
+    return clean
+      .split(/(?<=[.!?])\s+/)
+      .filter(Boolean)
+      .map((line) => `- ${line}`)
+      .join("\n");
+  }
+  if (styleId === "prompt") return `Task: ${clean}`;
+  return clean;
+}
+
+function applyCleanupStyle(text, styleId) {
+  const clean = sentenceCase(removeFillers(text));
+  if (styleId === "strict") return ensureTerminalPunctuation(toConciseText(clean));
+  if (styleId === "light") return ensureTerminalPunctuation(clean);
+  return ensureTerminalPunctuation(clean.replace(/\bchecked\b/gi, "reviewed"));
+}
+
+function toConciseText(text) {
+  return normalizeSpacing(text)
+    .replace(/\bI think\s+/gi, "")
+    .replace(/\bjust\s+/gi, "")
+    .replace(/\breally\s+/gi, "")
+    .replace(/\bvery\s+/gi, "")
+    .replace(/\bkind of\s+/gi, "")
+    .replace(/\bsort of\s+/gi, "");
+}
+
+function removeTerminalPunctuation(text) {
+  return normalizeSpacing(text).replace(/[.!?]+$/g, "");
+}
+
+function ensureTerminalPunctuation(text, mark = ".") {
+  const clean = normalizeSpacing(text);
+  if (!clean) return "";
+  return /[.!?]$/.test(clean) ? clean : `${clean}${mark}`;
+}
+
+function withProtectedTerms(text, transform) {
+  const terms = [...builtInCorrections, ...state.dictionary]
+    .map((word) => word.term)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  let next = text;
+  const placeholders = new Map();
+  terms.forEach((term, index) => {
+    const key = `__sf_term_${index}__`;
+    const pattern = new RegExp(`\\b${escapeRegExp(term)}\\b`, "g");
+    next = next.replace(pattern, () => {
+      placeholders.set(key, term);
+      return key;
+    });
+  });
+  next = transform(next);
+  placeholders.forEach((term, key) => {
+    next = next.replace(new RegExp(escapeRegExp(key), "gi"), term);
+  });
+  return next;
 }
 
 function renderTransforms() {
@@ -1405,7 +1589,8 @@ function friendlyTranscriptionError(error, audioStats = null) {
 function prepareTranscriptText(transcript) {
   const collapsed = collapseTranscriptLoops(transcript);
   const polished = polishPlainDictation(collapsed);
-  return normalizeHistoryText(polished);
+  const styled = applySelectedDictationStyle(polished);
+  return normalizeHistoryText(styled);
 }
 
 function hasMeaningfulSpeech(text) {
