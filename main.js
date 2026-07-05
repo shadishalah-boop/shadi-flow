@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell, systemPreferences } = require("electron");
+const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, screen, shell, systemPreferences } = require("electron");
 const { execFile, spawn } = require("node:child_process");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
@@ -95,6 +95,7 @@ let fluidAudioHelperRequestId = 0;
 let fluidAudioHelperRequests = new Map();
 let fluidAudioHelperStderr = "";
 let warmFluidAudioHelperPromise = null;
+let dockMenuReady = false;
 const resolvedCommandCache = new Map();
 
 function appLogPath() {
@@ -120,6 +121,65 @@ function logEvent(event, detail = {}) {
   } catch {
     // Logging must never become a second failure path.
   }
+}
+
+function ensureDockPresence() {
+  if (process.platform !== "darwin" || !app.dock) return;
+  try {
+    if (typeof app.setActivationPolicy === "function") {
+      app.setActivationPolicy("regular");
+    }
+    const dockShow = app.dock.show();
+    if (dockShow && typeof dockShow.catch === "function") {
+      dockShow.catch((error) => {
+        logEvent("dock:show-failed", errorDetails(error));
+      });
+    }
+    if (!dockMenuReady) {
+      app.dock.setMenu(Menu.buildFromTemplate([
+        {
+          label: "Open ShadiFlow",
+          click: () => {
+            presentMainWindow("dock-menu");
+          },
+        },
+        {
+          label: "Start Dictation",
+          click: () => {
+            handleGlobalDictationShortcut().catch((error) => {
+              logEvent("dock:start-dictation-failed", errorDetails(error));
+            });
+          },
+        },
+        { type: "separator" },
+        {
+          label: "Quit ShadiFlow",
+          click: () => {
+            isQuitting = true;
+            app.quit();
+          },
+        },
+      ]));
+      dockMenuReady = true;
+    }
+  } catch (error) {
+    logEvent("dock:ensure-failed", errorDetails(error));
+  }
+}
+
+function presentMainWindow(source = "manual") {
+  ensureDockPresence();
+  const win = mainWindow && !mainWindow.isDestroyed()
+    ? mainWindow
+    : createWindow({ show: false });
+  if (win.isMinimized()) win.restore();
+  win.show();
+  if (process.platform === "darwin" && typeof app.focus === "function") {
+    app.focus({ steal: true });
+  }
+  win.focus();
+  logEvent("main-window:present", { source });
+  return win;
 }
 
 process.on("uncaughtException", (error) => {
@@ -254,6 +314,7 @@ async function getRuntimeStatus() {
 }
 
 function createWindow(options = {}) {
+  ensureDockPresence();
   const shouldShow = options.show !== false;
   mainWindow = new BrowserWindow({
     width: 1320,
@@ -273,7 +334,10 @@ function createWindow(options = {}) {
   const win = mainWindow;
 
   win.on("show", () => logEvent("main-window:show"));
-  win.on("hide", () => logEvent("main-window:hide"));
+  win.on("hide", () => {
+    logEvent("main-window:hide");
+    ensureDockPresence();
+  });
   win.on("unresponsive", () => logEvent("main-window:unresponsive"));
   win.on("responsive", () => logEvent("main-window:responsive"));
 
@@ -525,9 +589,10 @@ function describePasteTarget(target) {
 
 function ensureMainWindow(show = true) {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    return createWindow({ show });
+    const win = createWindow({ show: false });
+    return show ? presentMainWindow("ensure") : win;
   }
-  if (show) mainWindow.show();
+  if (show) return presentMainWindow("ensure");
   return mainWindow;
 }
 
@@ -2191,6 +2256,7 @@ function splitArgs(input) {
 
 app.whenReady().then(async () => {
   if (!singleInstanceLock) return;
+  ensureDockPresence();
   try {
     await migrateFluidAudioSettings();
   } catch (error) {
@@ -2207,7 +2273,7 @@ app.whenReady().then(async () => {
   }, 12000);
 
   app.on("activate", () => {
-    ensureMainWindow(true);
+    presentMainWindow("activate");
   });
 });
 
