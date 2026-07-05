@@ -1375,22 +1375,32 @@ async function warmFluidAudioHelperInBackground() {
     const helperPath = await resolveFluidAudioHelperPath();
     if (!helperPath) return;
 
-    const streamingVariant = fluidAudioStreamingVariant(
+    const primaryStreamingVariant = fluidAudioStreamingVariant(
       settings.localFluidAudioStreamingVariant || DEFAULT_FLUID_AUDIO_STREAMING_VARIANT,
     );
-    const started = Date.now();
-    logEvent("audio:fluid-stream-warm-start", { streamingVariant });
-    const result = await callFluidAudioHelper(helperPath, {
-      op: "stream_warm",
-      variant: streamingVariant,
-    });
-    logEvent("audio:fluid-stream-warm-result", {
-      engine: result.engine || "fluid-streaming",
-      model: result.model || "FluidAudio streaming",
-      variant: result.variant || streamingVariant,
-      durationMs: Date.now() - started,
-      workerDurationMs: Number(result.workerDurationMs || 0),
-    });
+    const streamingVariants = [...new Set([
+      primaryStreamingVariant,
+      "nemotron-multilingual-latin-1120ms",
+    ])];
+
+    for (const streamingVariant of streamingVariants) {
+      const started = Date.now();
+      const language = streamingVariant.startsWith("nemotron-multilingual") ? "es" : undefined;
+      logEvent("audio:fluid-stream-warm-start", { streamingVariant, language: language || "" });
+      const result = await callFluidAudioHelper(helperPath, {
+        op: "stream_warm",
+        variant: streamingVariant,
+        language,
+      });
+      logEvent("audio:fluid-stream-warm-result", {
+        engine: result.engine || "fluid-streaming",
+        model: result.model || "FluidAudio streaming",
+        variant: result.variant || streamingVariant,
+        language: language || "",
+        durationMs: Date.now() - started,
+        workerDurationMs: Number(result.workerDurationMs || 0),
+      });
+    }
   })().catch((error) => {
     logEvent("audio:fluid-stream-warm-failed", errorDetails(error));
     stopFluidAudioHelper();
@@ -1895,6 +1905,14 @@ function fluidAudioStreamingVariant(variant = "") {
     "nemotron-560ms",
     "nemotron-1120ms",
     "nemotron-2240ms",
+    "nemotron-multilingual-latin-560ms",
+    "nemotron-multilingual-latin-1120ms",
+    "nemotron-multilingual-latin-2240ms",
+    "nemotron-multilingual-latin-4480ms",
+    "nemotron-multilingual-560ms",
+    "nemotron-multilingual-1120ms",
+    "nemotron-multilingual-2240ms",
+    "nemotron-multilingual-4480ms",
   ]);
   return supported.has(value) ? value : DEFAULT_FLUID_AUDIO_STREAMING_VARIANT;
 }

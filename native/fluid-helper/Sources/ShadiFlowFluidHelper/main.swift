@@ -33,11 +33,61 @@ struct Response: Encodable {
 
 struct StreamingSession {
     let id: String
-    let variant: StreamingModelVariant
-    let manager: any StreamingAsrManager
+    let variant: String
+    let model: String
+    let backend: StreamingBackend
     let startedAt: Date
     var samplesReceived: Int
     var sampleRate: Double
+}
+
+enum StreamingBackend {
+    case standard(any StreamingAsrManager)
+    case nemotronMultilingual(StreamingNemotronMultilingualAsrManager)
+
+    func reset() async throws {
+        switch self {
+        case .standard(let manager):
+            try await manager.reset()
+        case .nemotronMultilingual(let manager):
+            await manager.reset()
+        }
+    }
+
+    func partialTranscript() async -> String {
+        switch self {
+        case .standard(let manager):
+            return await manager.getPartialTranscript()
+        case .nemotronMultilingual(let manager):
+            return await manager.getPartialTranscript()
+        }
+    }
+
+    func finish() async throws -> String {
+        switch self {
+        case .standard(let manager):
+            return try await manager.finish()
+        case .nemotronMultilingual(let manager):
+            return try await manager.finish()
+        }
+    }
+
+    func resetForReuse() async {
+        switch self {
+        case .standard(let manager):
+            try? await manager.reset()
+        case .nemotronMultilingual(let manager):
+            await manager.reset()
+        }
+    }
+}
+
+struct NemotronMultilingualStreamingVariant {
+    let rawValue: String
+    let languageCode: String
+    let chunkMs: Int
+    let displayName: String
+    let cacheKey: String
 }
 
 actor FluidAsrService {
@@ -45,6 +95,8 @@ actor FluidAsrService {
     private var loadedVersion = ""
     private var streamingManager: (any StreamingAsrManager)?
     private var loadedStreamingVariant: StreamingModelVariant?
+    private var nemotronMultilingualShared: SharedNemotronMultilingualModels?
+    private var loadedNemotronMultilingualKey = ""
     private var streamingSession: StreamingSession?
 
     func warm(version: String) async throws {
@@ -95,8 +147,35 @@ actor FluidAsrService {
         )
     }
 
-    func warmStreaming(variant: String?) async throws -> Response {
+    func warmStreaming(variant: String?, language: String?) async throws -> Response {
         let started = Date()
+        if let multilingualVariant = nemotronMultilingualStreamingVariant(variant, language: language) {
+            if nemotronMultilingualShared == nil || loadedNemotronMultilingualKey != multilingualVariant.cacheKey {
+                nemotronMultilingualShared = try await StreamingNemotronMultilingualAsrManager
+                    .downloadAndPreloadShared(
+                        languageCode: multilingualVariant.languageCode,
+                        chunkMs: multilingualVariant.chunkMs
+                    )
+                loadedNemotronMultilingualKey = multilingualVariant.cacheKey
+            }
+
+            return Response(
+                id: nil,
+                ok: true,
+                text: "",
+                model: multilingualVariant.displayName,
+                engine: "fluid-streaming",
+                sessionId: nil,
+                variant: multilingualVariant.rawValue,
+                partial: false,
+                final: false,
+                confidence: nil,
+                audioDurationMs: nil,
+                workerDurationMs: Int(Date().timeIntervalSince(started) * 1000),
+                error: nil
+            )
+        }
+
         let resolvedVariant = streamingVariant(variant)
 
         if streamingManager == nil || loadedStreamingVariant != resolvedVariant {
@@ -126,9 +205,44 @@ actor FluidAsrService {
         )
     }
 
-    func streamStart(sessionId: String, variant: String?) async throws -> Response {
+    func streamStart(sessionId: String, variant: String?, language: String?) async throws -> Response {
         let started = Date()
-        let warmResponse = try await warmStreaming(variant: variant)
+        let warmResponse = try await warmStreaming(variant: variant, language: language)
+
+        if let multilingualVariant = nemotronMultilingualStreamingVariant(warmResponse.variant, language: language) {
+            guard let sharedModels = nemotronMultilingualShared else {
+                throw HelperError.message("Nemotron multilingual streaming models are not initialized.")
+            }
+            let manager = StreamingNemotronMultilingualAsrManager()
+            try await manager.loadFromShared(sharedModels)
+            await manager.setLanguage(multilingualVariant.languageCode)
+            streamingSession = StreamingSession(
+                id: sessionId,
+                variant: multilingualVariant.rawValue,
+                model: multilingualVariant.displayName,
+                backend: .nemotronMultilingual(manager),
+                startedAt: Date(),
+                samplesReceived: 0,
+                sampleRate: 16000
+            )
+
+            return Response(
+                id: nil,
+                ok: true,
+                text: "",
+                model: multilingualVariant.displayName,
+                engine: "fluid-streaming",
+                sessionId: sessionId,
+                variant: multilingualVariant.rawValue,
+                partial: false,
+                final: false,
+                confidence: nil,
+                audioDurationMs: nil,
+                workerDurationMs: Int(Date().timeIntervalSince(started) * 1000),
+                error: nil
+            )
+        }
+
         guard let streamManager = streamingManager else {
             throw HelperError.message("FluidAudio streaming manager is not initialized.")
         }
@@ -137,8 +251,9 @@ actor FluidAsrService {
         let resolvedVariant = streamingVariant(warmResponse.variant)
         streamingSession = StreamingSession(
             id: sessionId,
-            variant: resolvedVariant,
-            manager: streamManager,
+            variant: resolvedVariant.rawValue,
+            model: resolvedVariant.displayName,
+            backend: .standard(streamManager),
             startedAt: Date(),
             samplesReceived: 0,
             sampleRate: 16000
@@ -177,9 +292,14 @@ actor FluidAsrService {
 
         let buffer = try pcmBuffer(fromBase64: pcmBase64, sampleRate: sampleRate)
         let frames = Int(buffer.frameLength)
-        try await session.manager.appendAudio(buffer)
-        try await session.manager.processBufferedAudio()
-        let text = await session.manager.getPartialTranscript()
+        switch session.backend {
+        case .standard(let manager):
+            try await manager.appendAudio(buffer)
+            try await manager.processBufferedAudio()
+        case .nemotronMultilingual(let manager):
+            _ = try await manager.process(audioBuffer: buffer)
+        }
+        let text = await session.backend.partialTranscript()
 
         session.samplesReceived += frames
         session.sampleRate = sampleRate
@@ -189,10 +309,10 @@ actor FluidAsrService {
             id: nil,
             ok: true,
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-            model: session.variant.displayName,
+            model: session.model,
             engine: "fluid-streaming",
             sessionId: sessionId,
-            variant: session.variant.rawValue,
+            variant: session.variant,
             partial: true,
             final: false,
             confidence: nil,
@@ -208,17 +328,17 @@ actor FluidAsrService {
             throw HelperError.message("Streaming session is not active.")
         }
 
-        let text = try await session.manager.finish()
+        let text = try await session.backend.finish()
         streamingSession = nil
 
         return Response(
             id: nil,
             ok: true,
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-            model: session.variant.displayName,
+            model: session.model,
             engine: "fluid-streaming",
             sessionId: sessionId,
-            variant: session.variant.rawValue,
+            variant: session.variant,
             partial: false,
             final: true,
             confidence: nil,
@@ -231,18 +351,16 @@ actor FluidAsrService {
     func streamCancel(sessionId: String?) async -> Response {
         let session = streamingSession
         streamingSession = nil
-        if let manager = session?.manager {
-            try? await manager.reset()
-        }
+        await session?.backend.resetForReuse()
 
         return Response(
             id: nil,
             ok: true,
             text: "",
-            model: session?.variant.displayName,
+            model: session?.model,
             engine: "fluid-streaming",
             sessionId: sessionId ?? session?.id,
-            variant: session?.variant.rawValue,
+            variant: session?.variant,
             partial: false,
             final: true,
             confidence: nil,
@@ -275,6 +393,51 @@ actor FluidAsrService {
     private func streamingVariant(_ value: String?) -> StreamingModelVariant {
         let normalized = String(value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return StreamingModelVariant(rawValue: normalized) ?? .parakeetUnified320ms
+    }
+
+    private func nemotronMultilingualStreamingVariant(
+        _ value: String?,
+        language: String?
+    ) -> NemotronMultilingualStreamingVariant? {
+        let normalized = String(value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized.hasPrefix("nemotron-multilingual") else {
+            return nil
+        }
+
+        let chunkMs: Int
+        if normalized.contains("560ms") {
+            chunkMs = 560
+        } else if normalized.contains("2240ms") {
+            chunkMs = 2240
+        } else if normalized.contains("4480ms") {
+            chunkMs = 4480
+        } else {
+            chunkMs = 1120
+        }
+
+        let requestedLanguage = String(language ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let languageCode: String
+        if requestedLanguage.isEmpty || requestedLanguage == "auto" {
+            languageCode = normalized.contains("latin") ? "en" : "auto"
+        } else {
+            languageCode = requestedLanguage
+        }
+
+        let family = normalized.contains("latin") ? "latin" : "multilingual"
+        let rawValue = "nemotron-multilingual-\(family)-\(chunkMs)ms"
+        let displayName = family == "latin"
+            ? "Nemotron Multilingual 0.6B Latin (\(chunkMs)ms)"
+            : "Nemotron Multilingual 0.6B (\(chunkMs)ms)"
+        let cacheKey = "\(family):\(chunkMs)"
+        return NemotronMultilingualStreamingVariant(
+            rawValue: rawValue,
+            languageCode: languageCode,
+            chunkMs: chunkMs,
+            displayName: displayName,
+            cacheKey: cacheKey
+        )
     }
 
     nonisolated private func pcmBuffer(fromBase64 base64: String, sampleRate: Double) throws -> AVAudioPCMBuffer {
@@ -431,7 +594,8 @@ Task {
                 let sessionId = request.sessionId ?? UUID().uuidString
                 var response = try await service.streamStart(
                     sessionId: sessionId,
-                    variant: request.variant
+                    variant: request.variant,
+                    language: request.language
                 )
                 response = Response(
                     id: request.id,
@@ -450,7 +614,10 @@ Task {
                 )
                 writeResponse(response)
             case "stream_warm":
-                var response = try await service.warmStreaming(variant: request.variant)
+                var response = try await service.warmStreaming(
+                    variant: request.variant,
+                    language: request.language
+                )
                 response = Response(
                     id: request.id,
                     ok: response.ok,

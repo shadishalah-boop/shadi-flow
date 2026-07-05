@@ -4,11 +4,12 @@ const DEFAULT_TRANSCRIPTION_ENGINE = "fluid-parakeet";
 const LIVE_PREVIEW_INTERVAL_MS = 900;
 const LIVE_PREVIEW_MIN_MS = 900;
 const LIVE_PREVIEW_MAX_MS = 8000;
-const FLUID_STREAM_MIN_LANGUAGE = new Set(["en"]);
+const FLUID_STREAM_LANGUAGES = new Set(["en", "es", "fr", "de", "it", "pt"]);
 const FLUID_STREAM_MAX_QUEUED_CHUNKS = 1400;
 const FLUID_STREAM_BATCH_SAMPLES = 8192;
+const FLUID_STREAM_NEMOTRON_PREROLL_MS = 1120;
 const builtInCorrections = [
-  { term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow"] },
+  { term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow", "shatty flow", "shattyflow"] },
   { term: "Shadi", aliases: ["shady", "shaddy", "shaddi"] },
 ];
 
@@ -100,7 +101,7 @@ const settingsSections = [
 ];
 
 const defaultWords = [
-  { id: uid(), term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow"], scope: "personal", correct: true, favorite: true },
+  { id: uid(), term: "ShadiFlow", aliases: ["shadi flow", "shady flow", "shaddy flow", "shaddi flow", "shatty flow", "shattyflow"], scope: "personal", correct: true, favorite: true },
   { id: uid(), term: "Wispr Flow", aliases: ["whisper flow", "wispr flow"], scope: "personal", correct: true, favorite: false },
   { id: uid(), term: "Shadi", aliases: ["shady", "shadi"], scope: "personal", correct: true, favorite: false },
   { id: uid(), term: "Supabase", aliases: ["super base", "supa base"], scope: "team", correct: true, favorite: false },
@@ -1549,10 +1550,20 @@ function shouldUseFluidStreaming() {
   const language = String(selectedWhisperLanguage() || "auto").toLowerCase();
   return selectedTranscriptionEngine() === "fluid-parakeet" &&
     recordingMode === "wav" &&
-    FLUID_STREAM_MIN_LANGUAGE.has(language) &&
+    FLUID_STREAM_LANGUAGES.has(language) &&
     Boolean(window.clearScribe?.startStreamingTranscription) &&
     Boolean(window.clearScribe?.pushStreamingAudio) &&
     Boolean(window.clearScribe?.finishStreamingTranscription);
+}
+
+function fluidStreamingVariantForLanguage(language = selectedWhisperLanguage()) {
+  const normalized = String(language || "").toLowerCase();
+  if (normalized === "en") return "parakeet-unified-320ms";
+  return "nemotron-multilingual-latin-1120ms";
+}
+
+function isNemotronStreamingVariant(variant = "") {
+  return String(variant || "").toLowerCase().startsWith("nemotron-multilingual");
 }
 
 function startFluidStreamingPreview() {
@@ -1560,12 +1571,14 @@ function startFluidStreamingPreview() {
   const sessionId = `stream-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const stream = {
     sessionId,
+    variant: fluidStreamingVariantForLanguage(),
     active: true,
     accepting: true,
     ready: false,
     failed: false,
     busy: false,
     queue: [],
+    prerollSent: false,
     text: "",
     sampleRate: wavSampleRate || 48000,
     startPromise: null,
@@ -1574,17 +1587,18 @@ function startFluidStreamingPreview() {
   stream.startPromise = window.clearScribe.startStreamingTranscription({
     sessionId,
     language: selectedWhisperLanguage(),
-    variant: "parakeet-unified-320ms",
-  }).then((data) => {
+    variant: stream.variant,
+  }).then(async (data) => {
     if (fluidStreamState !== stream || !stream.active) return data;
     stream.ready = true;
     logDesktopEvent("recording:stream-started", {
       ...activeRecording,
       sessionId,
-      variant: data?.variant || "parakeet-unified-320ms",
+      variant: data?.variant || stream.variant,
       model: data?.model || "",
       workerDurationMs: data?.workerDurationMs || 0,
     });
+    await sendFluidStreamPreroll(stream);
     pumpFluidStream();
     return data;
   }).catch((error) => {
@@ -1620,6 +1634,21 @@ async function pumpFluidStream() {
       window.setTimeout(pumpFluidStream, 0);
     }
   }
+}
+
+async function sendFluidStreamPreroll(stream) {
+  if (!stream || stream.prerollSent || !isNemotronStreamingVariant(stream.variant)) return;
+  stream.prerollSent = true;
+  const sampleRate = Number(stream.sampleRate) || 48000;
+  const samples = Math.max(1, Math.round(sampleRate * (FLUID_STREAM_NEMOTRON_PREROLL_MS / 1000)));
+  const pcm = new Float32Array(samples);
+  const data = await window.clearScribe.pushStreamingAudio({
+    sessionId: stream.sessionId,
+    pcmBuffer: pcm.buffer,
+    sampleRate,
+    channels: 1,
+  });
+  updateFluidStreamText(stream, data);
 }
 
 function takeFluidStreamBatch(stream) {
