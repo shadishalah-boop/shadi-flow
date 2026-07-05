@@ -1145,21 +1145,6 @@ async function transcribeWithLocalWhisper(payload, settings, options = {}) {
       ? await runFluidAudioTranscription(whisperOptions)
       : await runWhisperTranscription(whisperOptions, tempDir);
 
-    if (!isPreview && speechEngine !== "mlx-parakeet" && speechEngine !== "fluid-parakeet" && whisperOptions.language && shouldRetryWithAutoLanguage(result.text, audioDurationMs)) {
-      logEvent("audio:retry-auto-language", {
-        engine: speechEngine,
-        model: result.model || whisperOptions.model,
-        language: whisperOptions.language,
-        audioDurationMs,
-        textLength: result.text.length,
-        textPreview: transcriptPreview(result.text),
-      });
-      result = {
-        ...(await runWhisperTranscription({ ...whisperOptions, language: "" }, tempDir)),
-        languageFallback: true,
-      };
-    }
-
     if (!isPreview && (speechEngine === "mlx-parakeet" || speechEngine === "fluid-parakeet") && !hasMeaningfulTranscript(result.text)) {
       const fallbackCommand = await resolveMlxWhisperCommand();
       if (fallbackCommand) {
@@ -1281,14 +1266,6 @@ function hasMeaningfulTranscript(text) {
     .trim();
   const matches = value.match(/[\p{L}\p{N}]/gu) || [];
   return matches.length >= 2;
-}
-
-function shouldRetryWithAutoLanguage(text, audioDurationMs = 0) {
-  if (!hasMeaningfulTranscript(text)) return true;
-
-  const words = String(text || "").match(/[\p{L}\p{N}]+/gu) || [];
-  if (audioDurationMs < 1800) return false;
-  return words.length <= 2 && String(text || "").trim().length <= 24;
 }
 
 function transcriptPreview(text) {

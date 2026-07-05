@@ -8,6 +8,7 @@ const FLUID_STREAM_LANGUAGES = new Set(["en", "es", "fr", "de", "it", "pt"]);
 const FLUID_STREAM_MAX_QUEUED_CHUNKS = 1400;
 const FLUID_STREAM_BATCH_SAMPLES = 8192;
 const FLUID_STREAM_NEMOTRON_PREROLL_MS = 1120;
+const RELIABLE_FLUID_FINAL_LANGUAGES = new Set(["", "auto", "en"]);
 const DEFAULT_FLUID_LIVE_MODEL = "auto";
 const fluidLiveModelOptions = [
   ["auto", "Auto: Parakeet English + Nemotron multilingual"],
@@ -1216,56 +1217,77 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
 
 async function transcribeRecordingBlob(blob, audioStats, recording, streamResult = null) {
   const streamingTranscript = String(streamResult?.text || "").trim();
-  if (hasMeaningfulSpeech(streamingTranscript)) {
-    const durationMs = Number(streamResult.audioDurationMs || streamResult.durationMs || 0);
-    const data = {
-      text: streamingTranscript,
-      durationMs,
-      workerDurationMs: Number(streamResult.workerDurationMs || 0),
-      audioPrepDurationMs: 0,
-      engine: streamResult.engine || "fluid-streaming",
-      model: streamResult.model || streamResult.variant || "FluidAudio streaming",
-      languageFallback: false,
-    };
-    logDesktopEvent("recording:stream-used", {
-      ...recording,
-      textLength: streamingTranscript.length,
-      transcriptPreview: transcriptPreview(streamingTranscript),
-      durationMs,
-      workerDurationMs: data.workerDurationMs,
-      engine: data.engine,
-      model: data.model,
-      variant: streamResult.variant || "",
-    });
-    return data;
-  }
-
   if (streamResult) {
-    logDesktopEvent("recording:stream-empty-fallback", {
+    logDesktopEvent("recording:stream-preview-finalizing", {
       ...recording,
       textLength: streamingTranscript.length,
       engine: streamResult.engine || "",
       model: streamResult.model || "",
       variant: streamResult.variant || "",
+      usedAsFinal: false,
     });
   }
 
+  const finalEngine = finalTranscriptionEngineForRecording();
   logDesktopEvent("recording:transcribe-start", {
     ...recording,
     bytes: blob.size,
     mimeType: blob.type || "",
     language: selectedWhisperLanguage() || "auto",
-    engine: selectedTranscriptionEngine(),
+    engine: finalEngine,
+    requestedEngine: selectedTranscriptionEngine(),
     audioStats,
   });
-  return window.clearScribe.transcribe({
-    audioBuffer: await blob.arrayBuffer(),
-    mimeType: blob.type || "audio/webm",
-    filename: `shadiflow-${Date.now()}${audioExtensionForMime(blob.type)}`,
-    language: selectedWhisperLanguage(),
-    engine: selectedTranscriptionEngine(),
-    audioStats,
-  });
+  try {
+    const data = await window.clearScribe.transcribe({
+      audioBuffer: await blob.arrayBuffer(),
+      mimeType: blob.type || "audio/webm",
+      filename: `shadiflow-${Date.now()}${audioExtensionForMime(blob.type)}`,
+      language: selectedWhisperLanguage(),
+      engine: finalEngine,
+      audioStats,
+    });
+    return {
+      ...data,
+      streamingPreviewLength: streamingTranscript.length,
+      requestedEngine: selectedTranscriptionEngine(),
+    };
+  } catch (error) {
+    if (hasMeaningfulSpeech(streamingTranscript)) {
+      const durationMs = Number(streamResult.audioDurationMs || streamResult.durationMs || 0);
+      const data = {
+        text: streamingTranscript,
+        durationMs,
+        workerDurationMs: Number(streamResult.workerDurationMs || 0),
+        audioPrepDurationMs: 0,
+        engine: streamResult.engine || "fluid-streaming",
+        model: streamResult.model || streamResult.variant || "FluidAudio streaming",
+        languageFallback: false,
+        streamingFallback: true,
+      };
+      logDesktopEvent("recording:stream-fallback-used", {
+        ...recording,
+        reason: String(error?.message || error).slice(0, 500),
+        textLength: streamingTranscript.length,
+        transcriptPreview: transcriptPreview(streamingTranscript),
+        durationMs,
+        workerDurationMs: data.workerDurationMs,
+        engine: data.engine,
+        model: data.model,
+        variant: streamResult.variant || "",
+      });
+      return data;
+    }
+    throw error;
+  }
+}
+
+function finalTranscriptionEngineForRecording() {
+  const selectedEngine = selectedTranscriptionEngine();
+  const language = String(selectedWhisperLanguage() || "auto").toLowerCase();
+  if (selectedEngine !== "fluid-parakeet") return selectedEngine;
+  if (RELIABLE_FLUID_FINAL_LANGUAGES.has(language)) return selectedEngine;
+  return "mlx-whisper";
 }
 
 function chooseAudioMimeType() {
