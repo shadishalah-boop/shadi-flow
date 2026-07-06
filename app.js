@@ -163,6 +163,8 @@ let livePreviewSeq = 0;
 let livePreviewText = "";
 let fluidStreamState = null;
 let stopInProgress = false;
+let finalizingRecording = false;
+let recordingSnapshot = null;
 let activeRecording = { autoInsert: false, source: "workspace" };
 
 const els = {
@@ -275,6 +277,8 @@ function logDesktopEvent(event, detail = {}) {
 
 function resetActiveRecording() {
   stopLivePreview();
+  finalizingRecording = false;
+  recordingSnapshot = null;
   activeRecording = { autoInsert: false, source: "workspace" };
   startedAt = 0;
 }
@@ -1156,6 +1160,8 @@ async function startRecording(options = {}) {
     });
     audioChunks = [];
     recordingMode = "";
+    recordingSnapshot = null;
+    finalizingRecording = false;
 
     if (window.AudioContext || window.webkitAudioContext) {
       await startWavRecorder(mediaStream);
@@ -1205,7 +1211,7 @@ function stopRecording(options = {}) {
     source: activeRecording.source,
   });
 
-  if (stopInProgress) return;
+  if (stopInProgress || finalizingRecording) return;
   if (!isRecording() && !force) return;
   if (!isRecording() && force && !hasBufferedAudio && !recordingMode) {
     publishOverlay({ type: "idle" });
@@ -1214,6 +1220,8 @@ function stopRecording(options = {}) {
   }
 
   stopInProgress = true;
+  finalizingRecording = true;
+  recordingSnapshot = { ...activeRecording };
   stopLivePreview({ keepText: true });
   els.flowBar.classList.remove("is-recording");
   setFlow("Transcribing", livePreviewText || "Finalizing local transcript");
@@ -1225,7 +1233,7 @@ function stopRecording(options = {}) {
   updateTimer(true);
 
   if (recordingMode === "wav" || recordingMimeType === "audio/wav") {
-    handleWavRecordingStopped();
+    handleWavRecordingStopped(recordingSnapshot);
     return;
   }
 
@@ -1240,11 +1248,13 @@ function stopRecording(options = {}) {
   }
 
   if (recordingMode === "media-recorder" && hasBufferedAudio) {
-    handleMediaRecorderStopped();
+    handleMediaRecorderStopped(recordingSnapshot);
     return;
   }
 
   stopInProgress = false;
+  finalizingRecording = false;
+  recordingSnapshot = null;
   publishOverlay({ type: "idle" });
   resetActiveRecording();
 }
@@ -1261,6 +1271,8 @@ function cancelRecording() {
   window.clearTimeout(autoStopTimerId);
   autoStopTimerId = null;
   els.flowBar.classList.remove("is-recording");
+  finalizingRecording = false;
+  recordingSnapshot = null;
   stopLivePreview();
   cleanupAudioRecorder();
   setFlow("Ready", "Shortcut or mic to dictate anywhere");
@@ -1313,7 +1325,7 @@ function startMediaRecorder(stream) {
   mediaRecorder.start();
 }
 
-async function handleWavRecordingStopped() {
+async function handleWavRecordingStopped(recording = recordingSnapshot || { ...activeRecording }) {
   const chunks = audioChunks;
   const sampleRate = wavSampleRate || 48000;
   const audioStats = measureAudioChunks(chunks);
@@ -1321,19 +1333,19 @@ async function handleWavRecordingStopped() {
   const streamResult = await finishFluidStreamingPreview({ timeoutMs: 12000 });
   const wavBuffer = encodeWav(chunks, sampleRate);
   const blob = new Blob([wavBuffer], { type: "audio/wav" });
-  await finishRecording(blob, audioStats, streamResult);
+  await finishRecording(blob, audioStats, streamResult, recording);
 }
 
-async function handleMediaRecorderStopped() {
+async function handleMediaRecorderStopped(recording = recordingSnapshot || { ...activeRecording }) {
   const mimeType = mediaRecorder?.mimeType || recordingMimeType || "audio/webm";
   const blob = new Blob(audioChunks, { type: mimeType });
   cleanupAudioRecorder();
-  await finishRecording(blob);
+  await finishRecording(blob, null, null, recording);
 }
 
-async function finishRecording(blob, audioStats = null, streamResult = null) {
+async function finishRecording(blob, audioStats = null, streamResult = null, recordingContext = null) {
   const recordedMs = Date.now() - startedAt;
-  const recording = { ...activeRecording };
+  const recording = recordingContext || recordingSnapshot || { ...activeRecording };
   logDesktopEvent("recording:finish-start", {
     ...recording,
     bytes: blob.size,
@@ -1345,7 +1357,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
   });
   if (blob.size < 1400 || recordedMs < 700) {
     setFlow("Too short", "Hold a little longer", { words: 0 });
-    publishOverlay({ type: "error", title: "Too short", detail: "Hold a little longer." });
+    publishOverlayForRecording(recording, { type: "error", title: "Too short", detail: "Hold a little longer." });
     hideWorkspaceOverlay(recording, "too-short");
     logDesktopEvent("recording:finish-too-short", { ...recording, bytes: blob.size, recordedMs });
     resetActiveRecording();
@@ -1411,7 +1423,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
         textLength: text.length,
       });
       if (result?.ok === false) {
-        publishOverlay({
+        publishOverlayForRecording(recording, {
           type: "error",
           title: result.permissionRequired ? "Enable automatic paste" : "Could not paste",
           detail: result.message || "Text copied to clipboard.",
@@ -1419,7 +1431,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
           permissionRequired: Boolean(result.permissionRequired),
         });
       } else {
-        publishOverlay({ type: "inserted", detail: `${entry.words} words / ${data.durationMs}ms`, text });
+        publishOverlayForRecording(recording, { type: "inserted", detail: `${entry.words} words / ${data.durationMs}ms`, text });
       }
     } else {
       notify(`Saved: ${text}`);
@@ -1432,7 +1444,7 @@ async function finishRecording(blob, audioStats = null, streamResult = null) {
     console.error(error);
     const detail = friendlyTranscriptionError(error, audioStats);
     setFlow("Transcription unavailable", detail, { words: 0 });
-    publishOverlay({ type: "error", title: "Transcription unavailable", detail });
+    publishOverlayForRecording(recording, { type: "error", title: "Transcription unavailable", detail });
     hideWorkspaceOverlay(recording, "failed");
     logDesktopEvent("recording:finish-failed", {
       ...recording,
@@ -2210,6 +2222,12 @@ function setFlow(title, detail, options = {}) {
 
 function publishOverlay(status) {
   if (activeRecording.autoInsert && window.clearScribe?.publishDictationStatus) {
+    window.clearScribe.publishDictationStatus(status);
+  }
+}
+
+function publishOverlayForRecording(recording = activeRecording, status) {
+  if (recording?.autoInsert && window.clearScribe?.publishDictationStatus) {
     window.clearScribe.publishDictationStatus(status);
   }
 }
